@@ -116,11 +116,58 @@ curl -X POST http://localhost:8000/api/v1/applications/tailor \
 
 ---
 
+---
+
+## Milestone 2 — LLM Provider Abstraction
+
+Introduces a clean abstraction layer between the service logic and the LLM vendor. The app ships with a **mock provider as the default** — no API key required. Gemini can be switched on with a single environment variable.
+
+**What's included:**
+- `app/llm/base.py` — `LLMProvider` abstract base class with a single `generate_text` method
+- `app/llm/mock.py` — `MockLLMProvider` for tests and local development (deterministic, no network calls)
+- `app/llm/gemini.py` — `GeminiLLMProvider` backed by `google-genai` SDK
+- `app/llm/factory.py` — `get_llm_provider()` reads `LLM_PROVIDER` from config and returns the right instance
+- `app/prompts/tailoring.py` — `build_tailoring_prompt()` assembles a structured prompt from the request
+- Updated `app/services/application_tailoring.py` — calls the prompt builder and LLM provider; embeds provider output in the response
+- 13 new tests covering factory, mock provider, prompt builder, and endpoint integration
+
+**New environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_PROVIDER` | `mock` | `mock` or `gemini` |
+| `GEMINI_API_KEY` | _(empty)_ | Required only when `LLM_PROVIDER=gemini` |
+| `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model name |
+
+**Running in mock mode (default — no setup needed):**
+
+```bash
+uvicorn app.main:app --reload
+```
+
+**Running with Gemini:**
+
+```bash
+# 1. Install the SDK
+pip install google-genai
+
+# 2. Set env vars in .env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your-key-here
+
+# 3. Start the server
+uvicorn app.main:app --reload
+```
+
+> Gemini is entirely optional. All tests run against the mock provider and do not require an API key.
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - Database (PostgreSQL / pgvector)
 - Redis
-- AI/LLM integration (Gemini, OpenAI)
+- Structured LLM output parsing (JSON schema enforcement)
 - LangGraph workflow orchestration
 - Authentication
 - Background jobs
