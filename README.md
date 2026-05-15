@@ -163,6 +163,35 @@ uvicorn app.main:app --reload
 
 ---
 
+---
+
+## Milestone 3 — LLM Error Handling & Fallback
+
+Adds production-style resilience so provider failures (503 high demand, 429 rate limit, network errors) never crash the API. The endpoint always returns a valid `ApplicationTailorResponse`.
+
+**What's included:**
+- `app/llm/exceptions.py` — `LLMProviderError` base and `LLMProviderUnavailableError` subclass
+- `app/llm/gemini.py` — all runtime SDK exceptions are now wrapped in `LLMProviderUnavailableError`
+- `app/services/application_tailoring.py` — `_generate_with_fallback()` helper: tries the configured provider, falls back to `MockLLMProvider` on `LLMProviderError`
+- Response signals degraded mode: `tailored_summary` and `fit_gap_analysis` include `"Fallback mode used"` when fallback occurred
+- 10 new tests covering exception hierarchy, Gemini error wrapping, fallback logic, and endpoint resilience
+
+**Fallback behavior:**
+
+| Scenario | Provider called | Response |
+|---|---|---|
+| `LLM_PROVIDER=mock` | `MockLLMProvider` | Normal mock output |
+| Gemini succeeds | `GeminiLLMProvider` | Real LLM output |
+| Gemini raises `LLMProviderError` | Falls back to `MockLLMProvider` | `"Fallback mode used"` visible in response |
+| Programming error (e.g. `TypeError`) | Not caught | 500 — intentional |
+
+**What is intentionally not included:**
+- Retries or exponential backoff (planned for a future milestone)
+- A dedicated `is_fallback` field in the response schema (planned alongside response metadata)
+- Tests that call the real Gemini API — all tests use monkeypatching and remain fully offline
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - Database (PostgreSQL / pgvector)

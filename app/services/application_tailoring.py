@@ -1,30 +1,47 @@
+from app.llm.exceptions import LLMProviderError
 from app.llm.factory import get_llm_provider
+from app.llm.mock import MockLLMProvider
 from app.prompts.tailoring import build_tailoring_prompt
 from app.schemas.application import ApplicationTailorRequest, ApplicationTailorResponse
+
+
+def _generate_with_fallback(prompt: str) -> tuple[str, bool]:
+    """
+    Call the configured LLM provider and return (output, used_fallback).
+
+    If the configured provider raises LLMProviderError, falls back to
+    MockLLMProvider so the endpoint always returns a response.
+    Non-LLM errors (e.g. programming mistakes) are not caught here.
+    """
+    try:
+        provider = get_llm_provider()
+        return provider.generate_text(prompt), False
+    except LLMProviderError:
+        fallback = MockLLMProvider()
+        return fallback.generate_text(prompt), True
 
 
 def tailor_application(request: ApplicationTailorRequest) -> ApplicationTailorResponse:
     """
     Tailor a job application using the configured LLM provider.
 
-    The prompt is built from the request, sent to the provider, and the raw
-    response is surfaced in the summary and fit/gap fields. The remaining
-    fields are structured mock content until full LLM output parsing lands
-    in a future milestone.
+    On provider failure, falls back to MockLLMProvider and notes this in
+    the response so callers can detect degraded mode.
     """
     prompt = build_tailoring_prompt(request)
-    provider = get_llm_provider()
-    llm_output = provider.generate_text(prompt)
+    llm_output, used_fallback = _generate_with_fallback(prompt)
 
     resume_snippet = request.master_resume[:60].strip()
     jd_snippet = request.job_description[:60].strip()
     llm_preview = llm_output[:120].strip()
 
+    summary_note = "Provider output received" if not used_fallback else "Fallback mode used"
+
     return ApplicationTailorResponse(
         tailored_summary=(
             f"Analyzed resume starting with: '{resume_snippet}...' "
             f"against role: '{jd_snippet}...'. "
-            f"Provider output received: {llm_preview}"
+            f"{summary_note}: {llm_preview}"
         ),
         tailored_bullets=[
             "Delivered high-impact results leveraging core skills from the master resume",
@@ -53,7 +70,7 @@ def tailor_application(request: ApplicationTailorRequest) -> ApplicationTailorRe
             "FIT: Resume shows relevant experience aligned with core JD requirements. "
             "GAP: Some preferred qualifications are not explicitly covered in the resume "
             "— consider highlighting transferable skills in the cover letter. "
-            f"[Provider note: {llm_preview}]"
+            f"[{'Fallback mode used' if used_fallback else 'Provider note'}: {llm_preview}]"
         ),
         interview_talking_points=[
             "Discuss a resume project that directly relates to the job description",

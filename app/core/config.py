@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # LLM provider selection. Defaults to "mock" so the app runs with no API keys.
     llm_provider: str = "mock"
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.5-flash"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
