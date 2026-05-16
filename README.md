@@ -283,11 +283,116 @@ sqlite3 local.db "SELECT id, provider_used, fallback_used, created_at FROM appli
 
 ---
 
+---
+
+## Milestone 6 — Background Job Processing
+
+Converts the synchronous tailoring endpoint into an async workflow. The API
+accepts requests immediately, enqueues generation as a background task, and
+lets the caller poll for results — decoupling request latency from AI execution time.
+
+**Why async workflows matter for AI systems:**
+LLM generation is inherently slow (seconds to tens of seconds). A synchronous
+API that blocks until generation finishes creates poor UX, exhausted thread
+pools, and brittle timeouts. The industry pattern — used by OpenAI, Anthropic,
+and every production AI pipeline — is to accept requests instantly, process
+asynchronously, and expose status + results via a polling or webhook API.
+
+**What's included:**
+- `app/models/run_status.py` — `RunStatus` StrEnum: `pending`, `processing`, `completed`, `failed`
+- `app/models/application.py` — two new columns (`status`, `error_message`); all AI output
+  columns made nullable (they start as NULL for pending rows)
+- `app/repositories/application_runs.py` — three new helpers:
+  `create_pending_run`, `update_run_status`, `save_completed_run`
+- `app/services/background_tailoring.py` — `process_tailoring_job(run_id, db)`:
+  the background task that drives the full lifecycle
+- Updated `POST /api/v1/applications/tailor` — creates the DB row, enqueues the task,
+  returns `{run_id, status: "pending"}` immediately
+- Updated `GET /api/v1/applications/runs/{run_id}` — returns output fields when
+  completed, error_message when failed, null output when pending/processing
+- Alembic migration `b2c3d4e5f6a7` — adds status/error_message columns, makes output
+  columns nullable via batch mode (SQLite + PostgreSQL compatible)
+- 14 new tests in `tests/test_background_jobs.py`
+
+**Workflow lifecycle:**
+
+```
+POST /tailor
+  └─ create row  (status=pending)
+  └─ enqueue BackgroundTask
+  └─ return {run_id, status="pending"}   ← instant response
+
+BackgroundTask
+  ├─ set status=processing
+  ├─ build prompt, call LLM, parse JSON, apply fallback if needed
+  ├─ success → persist output, set status=completed
+  └─ failure → set status=failed, store error_message
+
+GET /runs/{run_id}
+  ├─ pending / processing → {id, status, created_at, output fields: null}
+  ├─ completed            → {id, status, all output fields populated, ...}
+  └─ failed               → {id, status, error_message, output fields: null}
+```
+
+**Background processing architecture:**
+
+This milestone uses **FastAPI's built-in `BackgroundTasks`** — no external
+broker, no Redis, no Celery. The task runs in the same process after the HTTP
+response is sent. This is appropriate for a portfolio project and correctly
+teaches the lifecycle pattern; a production system at scale would replace the
+in-process task with a distributed worker queue (see "Not Included Yet").
+
+**Session passing:** The background task receives the SQLAlchemy `Session`
+from the route handler. In Starlette's request lifecycle, background tasks
+execute after the response body is sent but before dependency teardown, so
+the session remains valid throughout the task.
+
+**Test behaviour:** Starlette's `TestClient` runs background tasks synchronously
+before returning the response to the caller. Tests can therefore check the final
+DB state immediately after `client.post(...)` returns, while the POST response
+body still correctly reflects the initial `pending` status.
+
+**New response schemas:**
+
+```
+POST /api/v1/applications/tailor
+→ ApplicationTailoringJobResponse { run_id: int, status: str }
+
+GET /api/v1/applications/runs/{run_id}
+→ ApplicationTailoringRunResponse {
+    id, status, error_message?,
+    tailored_summary?, tailored_bullets?, ...,   ← null unless completed
+    provider_used?, fallback_used, created_at
+  }
+```
+
+**Migration commands:**
+
+```bash
+# Apply M6 migration (adds status/error_message, relaxes nullable constraints)
+alembic upgrade head
+
+# Verify
+alembic current
+
+# Roll back M6 only
+alembic downgrade -1
+```
+
+**What is intentionally not included:**
+- Redis / Celery / distributed workers — in-process BackgroundTasks is
+  the right teaching tool at this stage
+- Webhook callbacks — polling is simpler and sufficient
+- WebSockets / server-sent events for live status updates
+- Retry logic on failed jobs
+- A `GET /runs` list endpoint with pagination
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - pgvector / embeddings
-- Redis
+- Redis / Celery / distributed workers
 - LangGraph workflow orchestration
 - Authentication / user accounts
-- Background jobs
 - Docker / CI/CD

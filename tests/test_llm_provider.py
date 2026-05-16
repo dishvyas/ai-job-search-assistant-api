@@ -117,15 +117,16 @@ def test_tailor_endpoint_returns_200_in_mock_mode():
     assert response.status_code == 200
 
 
-def test_tailor_response_contains_llm_provider_output():
-    """The tailored_summary should contain evidence that the LLM provider was called."""
-    response = client.post(
+def test_tailor_response_contains_llm_provider_output(db_session):
+    """The completed run's tailored_summary should contain the [MOCK] provider marker."""
+    post_response = client.post(
         "/api/v1/applications/tailor",
         json={
             "master_resume": "Software engineer with 5 years of Python experience.",
             "job_description": "Backend engineer role using FastAPI.",
         },
     )
-    summary = response.json()["tailored_summary"]
+    run_id = post_response.json()["run_id"]
     # Mock provider now returns structured JSON; the summary field carries [MOCK] prefix
+    summary = client.get(f"/api/v1/applications/runs/{run_id}").json()["tailored_summary"]
     assert "[MOCK]" in summary

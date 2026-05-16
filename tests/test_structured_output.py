@@ -104,8 +104,8 @@ def test_parser_raises_on_json_array_instead_of_object():
 # ---------------------------------------------------------------------------
 
 
-def test_service_falls_back_when_parsing_fails(monkeypatch):
-    """If provider returns unparseable output, service falls back to mock."""
+def test_service_falls_back_when_parsing_fails(db_session, monkeypatch):
+    """If provider returns unparseable output, background task falls back to mock."""
 
     class GarbageProvider:
         def generate_text(self, prompt: str) -> str:
@@ -116,14 +116,16 @@ def test_service_falls_back_when_parsing_fails(monkeypatch):
         lambda: GarbageProvider(),
     )
 
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    assert response.status_code == 200
-    body = response.json()
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+    assert post_response.status_code == 200
     assert "[Fallback mode used]" in body["tailored_summary"]
 
 
-def test_service_falls_back_when_provider_unavailable(monkeypatch):
-    """If provider raises LLMProviderError, service falls back to mock."""
+def test_service_falls_back_when_provider_unavailable(db_session, monkeypatch):
+    """If provider raises LLMProviderError, background task falls back to mock."""
 
     class FailingProvider:
         def generate_text(self, prompt: str) -> str:
@@ -134,9 +136,11 @@ def test_service_falls_back_when_provider_unavailable(monkeypatch):
         lambda: FailingProvider(),
     )
 
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    assert response.status_code == 200
-    body = response.json()
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+    assert post_response.status_code == 200
     assert "[Fallback mode used]" in body["tailored_summary"]
 
 
@@ -150,21 +154,37 @@ def test_endpoint_returns_200_in_mock_mode():
     assert response.status_code == 200
 
 
-def test_endpoint_response_contains_all_fields():
+def test_endpoint_response_contains_job_receipt_fields():
+    """POST now returns a job receipt (run_id + status), not the full AI output."""
     response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
     body = response.json()
+    assert "run_id" in body
+    assert "status" in body
+
+
+def test_completed_run_contains_all_output_fields(db_session):
+    """GET /runs/{id} must return all TailoringLLMOutput fields once completed."""
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     for field in TailoringLLMOutput.model_fields:
         assert field in body, f"Missing field: {field}"
+        assert body[field] is not None, f"Field is None: {field}"
 
 
-def test_endpoint_normal_mode_has_no_fallback_note():
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    body = response.json()
+def test_endpoint_normal_mode_has_no_fallback_note(db_session):
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert "[Fallback mode used]" not in body["tailored_summary"]
 
 
-def test_endpoint_returns_non_empty_bullets_and_talking_points():
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    body = response.json()
+def test_endpoint_returns_non_empty_bullets_and_talking_points(db_session):
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert len(body["tailored_bullets"]) > 0
     assert len(body["interview_talking_points"]) > 0

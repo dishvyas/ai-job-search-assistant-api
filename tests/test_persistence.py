@@ -29,7 +29,7 @@ def test_tailor_stores_one_db_row(db_session):
 
 
 def test_tailor_stores_correct_provider_used(db_session):
-    """Default mock mode should store provider_used='mock'."""
+    """Default mock mode should store provider_used='mock' after background task."""
     client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
     run = db_session.query(ApplicationTailoringRun).first()
     assert run.provider_used == "mock"
@@ -91,6 +91,7 @@ def test_get_run_returns_stored_output(db_session):
     assert get_response.status_code == 200
     body = get_response.json()
     assert body["id"] == run.id
+    assert body["status"] == "completed"
     assert body["tailored_summary"] == run.tailored_summary
     assert body["provider_used"] == "mock"
     assert body["fallback_used"] is False

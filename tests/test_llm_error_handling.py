@@ -115,7 +115,10 @@ def test_get_llm_output_does_not_catch_non_llm_errors(monkeypatch):
 
 
 def test_endpoint_returns_200_when_provider_fails(monkeypatch):
-    """Endpoint must return 200 even when the configured provider is unavailable."""
+    """
+    POST must return 200 (job accepted) even when the configured provider is
+    unavailable. The background task handles fallback; the route always accepts.
+    """
 
     class FailingProvider:
         def generate_text(self, prompt: str) -> str:
@@ -129,8 +132,11 @@ def test_endpoint_returns_200_when_provider_fails(monkeypatch):
     assert response.status_code == 200
 
 
-def test_endpoint_fallback_response_notes_fallback_mode(monkeypatch):
-    """tailored_summary and fit_gap_analysis should note fallback when it occurred."""
+def test_endpoint_fallback_response_notes_fallback_mode(db_session, monkeypatch):
+    """
+    When the configured provider fails, the background task falls back to mock.
+    The completed run's tailored_summary and fit_gap_analysis must note fallback.
+    """
 
     class FailingProvider:
         def generate_text(self, prompt: str) -> str:
@@ -140,15 +146,19 @@ def test_endpoint_fallback_response_notes_fallback_mode(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
     )
 
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    body = response.json()
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert "Fallback mode used" in body["fit_gap_analysis"]
     assert "Fallback mode used" in body["tailored_summary"]
 
 
-def test_endpoint_normal_mode_does_not_mention_fallback():
-    """In normal mock mode, response must not mention fallback."""
-    response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
-    body = response.json()
+def test_endpoint_normal_mode_does_not_mention_fallback(db_session):
+    """In normal mock mode, completed run output must not mention fallback."""
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert "Fallback mode used" not in body["tailored_summary"]
     assert "Fallback mode used" not in body["fit_gap_analysis"]
