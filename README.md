@@ -226,11 +226,68 @@ Raw LLM text is unpredictable. A production backend needs a contract: if the AI 
 
 ---
 
+---
+
+## Milestone 5 — Application Persistence
+
+Adds a database layer so every tailoring run (inputs + AI outputs + metadata) is persisted. SQLite is the default for local development; PostgreSQL is supported by changing one environment variable.
+
+**What's included:**
+- `app/db/base.py` — SQLAlchemy `DeclarativeBase`
+- `app/db/session.py` — engine, `SessionLocal`, `get_db()` FastAPI dependency
+- `app/models/application.py` — `ApplicationTailoringRun` ORM model
+- `app/repositories/application_runs.py` — `create_application_tailoring_run()` and `get_application_tailoring_run()`
+- `app/schemas/application.py` — `ApplicationTailoringRunResponse` read schema (does not expose raw resume/JD)
+- `app/services/application_tailoring.py` — now accepts `db: Session`, tracks `provider_used` / `fallback_used`, saves run after generation
+- `app/api/v1/routes/applications.py` — `GET /api/v1/applications/runs/{run_id}` added
+- `alembic/` — migration setup; one migration creates the `application_tailoring_runs` table
+- `tests/conftest.py` — autouse fixtures create a fresh in-memory SQLite DB per test and override `get_db`; all 60 tests run fully offline
+
+**New endpoint:**
+```
+GET /api/v1/applications/runs/{run_id}
+```
+Returns `ApplicationTailoringRunResponse` — includes AI output, `provider_used`, `fallback_used`, and `created_at`.
+
+**Environment variable:**
+```
+DATABASE_URL=sqlite:///./local.db          # default (local dev)
+DATABASE_URL=postgresql+psycopg://...      # PostgreSQL (production)
+```
+
+**Migration commands:**
+```bash
+# Apply migrations (creates tables)
+alembic upgrade head
+
+# Check current migration state
+alembic current
+
+# Generate a new migration after model changes
+alembic revision --autogenerate -m "describe your change"
+
+# Roll back one migration
+alembic downgrade -1
+```
+
+**Inspect stored runs (SQLite):**
+```bash
+sqlite3 local.db "SELECT id, provider_used, fallback_used, created_at FROM application_tailoring_runs;"
+```
+
+**What is intentionally not included:**
+- User accounts / authentication — runs are not scoped to users yet
+- pgvector / embeddings — a future milestone
+- Pagination on the runs list endpoint — not added yet
+- Async SQLAlchemy — synchronous is simpler and sufficient for this stage
+
+---
+
 ## Not Included Yet (Intentionally)
 
-- Database (PostgreSQL / pgvector)
+- pgvector / embeddings
 - Redis
 - LangGraph workflow orchestration
-- Authentication
+- Authentication / user accounts
 - Background jobs
 - Docker / CI/CD

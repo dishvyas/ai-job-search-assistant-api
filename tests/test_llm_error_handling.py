@@ -69,9 +69,10 @@ def test_get_llm_output_returns_parsed_output_on_success(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: mock_provider
     )
 
-    output, used_fallback = _get_llm_output("some prompt")
+    output, provider_used, used_fallback = _get_llm_output("some prompt")
 
     assert used_fallback is False
+    assert provider_used == "mock"
     assert isinstance(output, TailoringLLMOutput)
 
 
@@ -86,9 +87,10 @@ def test_get_llm_output_falls_back_on_provider_error(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
     )
 
-    output, used_fallback = _get_llm_output("some prompt")
+    output, provider_used, used_fallback = _get_llm_output("some prompt")
 
     assert used_fallback is True
+    assert provider_used == "fallback-mock"
     assert isinstance(output, TailoringLLMOutput)
 
 

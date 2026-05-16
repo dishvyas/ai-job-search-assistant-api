@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
 
+    # Database. Defaults to local SQLite — no PostgreSQL needed for local dev or tests.
+    database_url: str = "sqlite:///./local.db"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

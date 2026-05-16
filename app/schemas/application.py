@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, field_validator
 
 
@@ -23,3 +25,21 @@ class ApplicationTailorResponse(BaseModel):
     recruiter_message_draft: str
     fit_gap_analysis: str
     interview_talking_points: list[str]
+
+
+class ApplicationTailoringRunResponse(BaseModel):
+    """Read schema for a persisted tailoring run. Does not expose raw resume/JD inputs."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    tailored_summary: str
+    tailored_bullets: list[str]
+    cover_letter_draft: str
+    application_question_answers: list[str]
+    recruiter_message_draft: str
+    fit_gap_analysis: str
+    interview_talking_points: list[str]
+    provider_used: str
+    fallback_used: bool
+    created_at: datetime
