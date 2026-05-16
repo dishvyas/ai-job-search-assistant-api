@@ -192,11 +192,44 @@ Adds production-style resilience so provider failures (503 high demand, 429 rate
 
 ---
 
+---
+
+## Milestone 4 — Structured LLM Output
+
+Moves from "embed raw LLM text into the response" to a proper **parse → validate → map** pipeline. The LLM is now instructed to return valid JSON, which is parsed and schema-validated before being mapped into the API response.
+
+**Why structured outputs matter for backend AI systems:**
+Raw LLM text is unpredictable. A production backend needs a contract: if the AI doesn't produce the shape you expect, the system should detect it and respond safely rather than returning garbage or crashing.
+
+**What's included:**
+- `app/schemas/llm_output.py` — `TailoringLLMOutput` Pydantic model: the internal schema the LLM targets
+- `app/llm/parsing.py` — `parse_tailoring_response()`: parses JSON, validates against `TailoringLLMOutput`, raises `LLMOutputParsingError` on failure
+- `app/llm/exceptions.py` — `LLMOutputParsingError` added (separate from `LLMProviderError`)
+- `app/llm/mock.py` — now returns deterministic valid JSON matching the schema
+- `app/prompts/tailoring.py` — prompt updated to instruct the LLM to return JSON only (no markdown, no prose)
+- `app/services/application_tailoring.py` — `_get_llm_output()` replaces old helper; maps parsed output directly into the response
+- 15 new tests covering parser happy/error paths, mock JSON validity, fallback on parse failure
+
+**Parsing fallback behavior:**
+
+| Scenario | Outcome |
+|---|---|
+| Provider returns valid JSON | Parsed, validated, mapped to response |
+| Provider returns malformed JSON | `LLMOutputParsingError` → fallback to mock |
+| Provider unavailable (`LLMProviderError`) | Fallback to mock (unchanged from M3) |
+| Mock provider output is invalid | Exception raised — this is a code bug, not a runtime condition |
+
+**What is intentionally not included:**
+- Gemini-native structured output mode (e.g. `response_schema` parameter) — prompt-level JSON instruction is simpler and provider-agnostic
+- JSON repair / partial parsing — if the LLM returns malformed output, we fall back rather than guess
+- Tests that call the real Gemini API — all tests use monkeypatching and remain fully offline
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - Database (PostgreSQL / pgvector)
 - Redis
-- Structured LLM output parsing (JSON schema enforcement)
 - LangGraph workflow orchestration
 - Authentication
 - Background jobs

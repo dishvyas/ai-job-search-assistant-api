@@ -52,7 +52,7 @@ def test_mock_provider_generate_text_returns_string():
 def test_mock_provider_includes_prompt_preview():
     provider = MockLLMProvider()
     result = provider.generate_text("Test prompt content here")
-    # The mock should echo back part of the prompt to prove it was called
+    # Mock embeds a prompt preview inside the JSON tailored_summary field
     assert "Test prompt content here" in result
 
 
@@ -127,5 +127,5 @@ def test_tailor_response_contains_llm_provider_output():
         },
     )
     summary = response.json()["tailored_summary"]
-    # Mock provider output is embedded in the summary
-    assert "[MOCK LLM RESPONSE]" in summary
+    # Mock provider now returns structured JSON; the summary field carries [MOCK] prefix
+    assert "[MOCK]" in summary

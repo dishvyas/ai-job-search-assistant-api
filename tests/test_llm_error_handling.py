@@ -7,7 +7,8 @@ from app.llm.exceptions import LLMProviderError, LLMProviderUnavailableError
 from app.llm.gemini import GeminiLLMProvider
 from app.llm.mock import MockLLMProvider
 from app.main import app
-from app.services.application_tailoring import _generate_with_fallback
+from app.schemas.llm_output import TailoringLLMOutput
+from app.services.application_tailoring import _get_llm_output
 
 client = TestClient(app)
 
@@ -57,35 +58,26 @@ def test_gemini_does_not_wrap_import_error():
 
 
 # ---------------------------------------------------------------------------
-# Fallback helper
+# _get_llm_output helper
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_returns_used_fallback_false_on_success(monkeypatch):
-    """When provider succeeds, used_fallback must be False."""
+def test_get_llm_output_returns_parsed_output_on_success(monkeypatch):
+    """When provider succeeds and returns valid JSON, used_fallback must be False."""
     mock_provider = MockLLMProvider()
     monkeypatch.setattr(
         "app.services.application_tailoring.get_llm_provider", lambda: mock_provider
     )
 
-    output, used_fallback = _generate_with_fallback("some prompt")
+    output, used_fallback = _get_llm_output("some prompt")
 
     assert used_fallback is False
-    assert isinstance(output, str)
+    assert isinstance(output, TailoringLLMOutput)
 
 
-def test_fallback_returns_used_fallback_true_on_llm_error(monkeypatch):
+def test_get_llm_output_falls_back_on_provider_error(monkeypatch):
     """When provider raises LLMProviderError, used_fallback must be True."""
 
-    def failing_provider():
-        raise LLMProviderUnavailableError("503 from provider")
-
-    monkeypatch.setattr(
-        "app.services.application_tailoring.get_llm_provider",
-        lambda: (_ for _ in ()).throw(LLMProviderUnavailableError("503")),
-    )
-
-    # Simpler: patch get_llm_provider to return a provider whose generate_text raises
     class FailingProvider:
         def generate_text(self, prompt: str) -> str:
             raise LLMProviderUnavailableError("503 UNAVAILABLE")
@@ -94,14 +86,13 @@ def test_fallback_returns_used_fallback_true_on_llm_error(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
     )
 
-    output, used_fallback = _generate_with_fallback("some prompt")
+    output, used_fallback = _get_llm_output("some prompt")
 
     assert used_fallback is True
-    assert isinstance(output, str)
-    assert len(output) > 0
+    assert isinstance(output, TailoringLLMOutput)
 
 
-def test_fallback_does_not_catch_non_llm_errors(monkeypatch):
+def test_get_llm_output_does_not_catch_non_llm_errors(monkeypatch):
     """Programming errors (e.g. TypeError) must not be swallowed by the fallback."""
 
     class BrokenProvider:
@@ -113,7 +104,7 @@ def test_fallback_does_not_catch_non_llm_errors(monkeypatch):
     )
 
     with pytest.raises(TypeError):
-        _generate_with_fallback("some prompt")
+        _get_llm_output("some prompt")
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +128,7 @@ def test_endpoint_returns_200_when_provider_fails(monkeypatch):
 
 
 def test_endpoint_fallback_response_notes_fallback_mode(monkeypatch):
-    """fit_gap_analysis should say 'Fallback mode used' when fallback occurred."""
+    """tailored_summary and fit_gap_analysis should note fallback when it occurred."""
 
     class FailingProvider:
         def generate_text(self, prompt: str) -> str:

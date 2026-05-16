@@ -1,14 +1,32 @@
 from app.schemas.application import ApplicationTailorRequest
 
+# The exact JSON shape we ask the LLM to produce.
+# Keeping this as a module-level constant makes it easy to review and update.
+_JSON_SCHEMA_EXAMPLE = """{
+  "tailored_summary": "string",
+  "tailored_bullets": ["string", "string", "string"],
+  "cover_letter_draft": "string",
+  "application_question_answers": ["string", "string", "string"],
+  "recruiter_message_draft": "string",
+  "fit_gap_analysis": "string",
+  "interview_talking_points": ["string", "string", "string"]
+}"""
+
 
 def build_tailoring_prompt(request: ApplicationTailorRequest) -> str:
     """
-    Build the tailoring prompt from a request.
-    Includes optional fields only when provided.
+    Build a structured prompt that instructs the LLM to return valid JSON only.
+    Optional fields are included only when provided.
     """
     sections = [
         "You are an expert career coach and resume writer.",
+        "",
         "Using the inputs below, produce tailored job application materials.",
+        "Your response MUST be valid JSON only.",
+        "Do NOT include markdown, code fences, or any text outside the JSON object.",
+        "",
+        "Required JSON shape:",
+        _JSON_SCHEMA_EXAMPLE,
         "",
         "## Master Resume",
         request.master_resume,
@@ -25,15 +43,7 @@ def build_tailoring_prompt(request: ApplicationTailorRequest) -> str:
 
     sections += [
         "",
-        "## Output Required",
-        "Provide all of the following sections:",
-        "1. Tailored Summary",
-        "2. Tailored Bullets (3–5 bullet points)",
-        "3. Cover Letter Draft",
-        "4. Application Question Answers (3 sample answers)",
-        "5. Recruiter Message Draft",
-        "6. Fit / Gap Analysis",
-        "7. Interview Talking Points (3–5 points)",
+        "Respond with the JSON object only. No explanation. No markdown.",
     ]
 
     return "\n".join(sections)

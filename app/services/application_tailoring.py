@@ -1,80 +1,59 @@
-from app.llm.exceptions import LLMProviderError
+from app.llm.exceptions import LLMOutputParsingError, LLMProviderError
 from app.llm.factory import get_llm_provider
 from app.llm.mock import MockLLMProvider
+from app.llm.parsing import parse_tailoring_response
 from app.prompts.tailoring import build_tailoring_prompt
 from app.schemas.application import ApplicationTailorRequest, ApplicationTailorResponse
+from app.schemas.llm_output import TailoringLLMOutput
 
 
-def _generate_with_fallback(prompt: str) -> tuple[str, bool]:
+def _get_llm_output(prompt: str) -> tuple[TailoringLLMOutput, bool]:
     """
-    Call the configured LLM provider and return (output, used_fallback).
+    Call the configured provider, parse the JSON response, and return
+    (parsed_output, used_fallback).
 
-    If the configured provider raises LLMProviderError, falls back to
-    MockLLMProvider so the endpoint always returns a response.
-    Non-LLM errors (e.g. programming mistakes) are not caught here.
+    Fallback to MockLLMProvider when:
+    - the provider raises LLMProviderError (e.g. 503, 429)
+    - the provider output cannot be parsed (LLMOutputParsingError)
+
+    Non-LLM programming errors are not caught and will surface as 500s.
     """
+    # --- attempt configured provider ---
     try:
         provider = get_llm_provider()
-        return provider.generate_text(prompt), False
+        raw = provider.generate_text(prompt)
+        return parse_tailoring_response(raw), False
     except LLMProviderError:
-        fallback = MockLLMProvider()
-        return fallback.generate_text(prompt), True
+        pass  # provider unavailable — fall through to mock
+    except LLMOutputParsingError:
+        pass  # provider returned malformed output — fall through to mock
+
+    # --- fallback: mock provider ---
+    fallback = MockLLMProvider()
+    raw = fallback.generate_text(prompt)
+    # Mock always returns valid JSON; if this somehow fails, let it raise.
+    return parse_tailoring_response(raw), True
 
 
 def tailor_application(request: ApplicationTailorRequest) -> ApplicationTailorResponse:
     """
     Tailor a job application using the configured LLM provider.
 
-    On provider failure, falls back to MockLLMProvider and notes this in
-    the response so callers can detect degraded mode.
+    The LLM is asked to return structured JSON. That JSON is parsed and
+    validated before being mapped into the API response.
+    On provider or parsing failure, falls back to the mock provider.
     """
     prompt = build_tailoring_prompt(request)
-    llm_output, used_fallback = _generate_with_fallback(prompt)
+    llm_output, used_fallback = _get_llm_output(prompt)
 
-    resume_snippet = request.master_resume[:60].strip()
-    jd_snippet = request.job_description[:60].strip()
-    llm_preview = llm_output[:120].strip()
-
-    summary_note = "Provider output received" if not used_fallback else "Fallback mode used"
+    fallback_note = " [Fallback mode used]" if used_fallback else ""
 
     return ApplicationTailorResponse(
-        tailored_summary=(
-            f"Analyzed resume starting with: '{resume_snippet}...' "
-            f"against role: '{jd_snippet}...'. "
-            f"{summary_note}: {llm_preview}"
-        ),
-        tailored_bullets=[
-            "Delivered high-impact results leveraging core skills from the master resume",
-            "Drove cross-functional initiatives aligned with job description requirements",
-            "Quantified achievements mapping to key responsibilities outlined in the role",
-        ],
-        cover_letter_draft=(
-            "Dear Hiring Manager,\n\n"
-            "I am excited to apply for this role. My background closely aligns with "
-            "the requirements outlined in the job description. "
-            "I look forward to discussing how I can contribute to your team.\n\n"
-            "Sincerely,\n[Candidate Name]"
-        ),
-        application_question_answers=[
-            "My greatest strength is my ability to adapt quickly to new challenges.",
-            "I am motivated by solving complex problems that create real-world impact.",
-            "I see this role as a strong match for both my skills and my career goals.",
-        ],
-        recruiter_message_draft=(
-            "Hi [Recruiter Name],\n\n"
-            "I came across this opportunity and believe my experience is a strong fit. "
-            "I would love to connect and learn more about the role.\n\n"
-            "Best,\n[Candidate Name]"
-        ),
-        fit_gap_analysis=(
-            "FIT: Resume shows relevant experience aligned with core JD requirements. "
-            "GAP: Some preferred qualifications are not explicitly covered in the resume "
-            "— consider highlighting transferable skills in the cover letter. "
-            f"[{'Fallback mode used' if used_fallback else 'Provider note'}: {llm_preview}]"
-        ),
-        interview_talking_points=[
-            "Discuss a resume project that directly relates to the job description",
-            "Highlight measurable outcomes that demonstrate impact in a similar context",
-            "Prepare a question about team challenges to show genuine interest",
-        ],
+        tailored_summary=llm_output.tailored_summary + fallback_note,
+        tailored_bullets=llm_output.tailored_bullets,
+        cover_letter_draft=llm_output.cover_letter_draft,
+        application_question_answers=llm_output.application_question_answers,
+        recruiter_message_draft=llm_output.recruiter_message_draft,
+        fit_gap_analysis=llm_output.fit_gap_analysis + fallback_note,
+        interview_talking_points=llm_output.interview_talking_points,
     )
