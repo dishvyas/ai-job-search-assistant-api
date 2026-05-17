@@ -43,3 +43,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local SQLite database files (use alembic migrations; never commit DB data)
+local.db
+*.db
+*.sqlite
+*.sqlite3

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.llm.cost_estimation import estimate_generation_cost
 from app.llm.token_estimation import estimate_input_tokens, estimate_output_tokens
 from app.models.run_status import RunStatus
@@ -13,33 +14,25 @@ from app.repositories.application_runs import (
     update_run_status,
 )
 from app.schemas.application import ApplicationTailorRequest
+from app.services.agentic_tailoring import run_agentic_workflow
 from app.services.application_tailoring import _get_llm_output
+
+_SUPPORTED_MODES = {"single_step", "agentic"}
 
 
 def process_tailoring_job(run_id: int, db: Session) -> None:
     """
     Background task: generate tailoring output and track workflow metadata.
 
-    Flow
-    ----
-    1. Load the run row.
-    2. Transition to processing; record started_at.
-    3. Reconstruct the original request and build the LLM prompt.
-    4. Call _get_llm_output (includes provider fallback logic).
-    5. Estimate tokens and cost from prompt + raw output.
-    6. Persist output, metadata, and transition to completed.
+    Workflow mode is read from settings.workflow_mode:
+      single_step — one LLM call (fast, cheap, default)
+      agentic     — four-stage LangGraph workflow (more reasoning steps)
 
-    On any exception the run is marked failed and timing metadata is still
-    saved so partial observability data is available for debugging.
-
-    generation_attempts
-    -------------------
-    Set to 1 before calling _get_llm_output. Incremented to 2 if fallback
-    occurred (primary provider failed, mock was called as backup).
+    An unsupported workflow_mode raises ValueError immediately, which is
+    caught by the exception handler and stored as a failed run.
     """
     run = get_application_tailoring_run(db, run_id)
     if run is None:
-        # Should never happen — run was just created by the route.
         return
 
     update_run_status(db, run, RunStatus.PROCESSING.value)
@@ -53,19 +46,33 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             company_info=run.company_info,
             user_preferences=run.user_preferences,
         )
+
+        mode = settings.workflow_mode.lower()
+        if mode not in _SUPPORTED_MODES:
+            raise ValueError(
+                f"Unsupported workflow_mode: {mode!r}. Must be one of: {sorted(_SUPPORTED_MODES)}"
+            )
+
+        # Build the single-step prompt; used for input token estimation in both modes.
         prompt = build_tailoring_prompt(request)
 
-        generation_attempts = 1
-        llm_output, provider_used, used_fallback = _get_llm_output(prompt)
-        if used_fallback:
-            generation_attempts = 2
+        if mode == "single_step":
+            generation_attempts = 1
+            llm_output, provider_used, used_fallback = _get_llm_output(prompt)
+            if used_fallback:
+                generation_attempts = 2
+
+        else:  # agentic
+            # 4 stages × 1 call each; double if any stage fell back (approximate).
+            llm_output, provider_used, used_fallback = run_agentic_workflow(request)
+            generation_attempts = 4 + (4 if used_fallback else 0)
 
         completed_at = datetime.now(UTC)
         latency_ms = int((completed_at - started_at).total_seconds() * 1000)
 
-        # Estimate tokens from the prompt (input) and serialised output (output).
-        # Using json.dumps(model_dump()) gives a string comparable in size to the
-        # raw LLM response, which is what we'd ideally measure.
+        # Token/cost estimation.
+        # For agentic mode this approximates the final stage only; intermediate
+        # stage tokens are not counted individually (acceptable approximation).
         output_text = json.dumps(llm_output.model_dump())
         input_tokens = estimate_input_tokens(prompt)
         output_tokens = estimate_output_tokens(output_text)

@@ -479,11 +479,100 @@ answer "how long did it run before failing?" without needing full output data.
 
 ---
 
+---
+
+## Milestone 8 — Agentic Application Workflow
+
+Introduces an optional **four-stage agentic workflow** powered by LangGraph.
+Instead of a single LLM call that produces all output at once, the workflow
+chains four focused calls — each reasoning about a narrower problem and passing
+its output to the next stage. The single-step mode remains the default; agentic
+mode is opt-in via a single environment variable.
+
+**Why multi-stage reasoning?**
+A single prompt asking the model to simultaneously analyse a resume, understand
+a job description, identify gaps, and write application materials is asking it
+to do too much at once. Breaking the task into sequential stages with
+intermediate schema-validated outputs improves reliability and makes each
+reasoning step auditable.
+
+**What's included:**
+- `app/schemas/agent.py` — three intermediate Pydantic schemas: `ResumeAnalysis`,
+  `JobDescriptionAnalysis`, `FitGapAnalysis`
+- `app/prompts/agentic_tailoring.py` — four prompt builders, each embedding a
+  `## Task: <stage>` header so the mock provider returns the correct shape
+- `app/services/agentic_tailoring.py` — LangGraph `StateGraph` with four nodes;
+  each node makes one LLM call and parses the result into its schema; provider
+  fallback is applied per-stage
+- `app/llm/mock.py` — extended with stage-header detection and per-stage
+  deterministic JSON responses; existing single-step behaviour unchanged
+- `app/core/config.py` — new `workflow_mode` setting (`single_step` | `agentic`)
+- `app/services/background_tailoring.py` — mode selection: `single_step` calls
+  `_get_llm_output`; `agentic` calls `run_agentic_workflow`; unsupported modes
+  store a `failed` run with a clear error message
+- `.gitignore` — added `local.db`, `*.db`, `*.sqlite`, `*.sqlite3` (SQLite files
+  were accidentally trackable before this milestone)
+- 19 new tests in `tests/test_agentic_workflow.py`
+
+**The four stages:**
+
+```
+Stage 1 — analyze_resume
+  Input:  master_resume text
+  Output: ResumeAnalysis { key_skills, relevant_experience, strengths }
+
+Stage 2 — analyze_jd
+  Input:  job_description text
+  Output: JobDescriptionAnalysis { required_skills, responsibilities, role_focus }
+
+Stage 3 — analyze_fit_gap
+  Input:  ResumeAnalysis + JobDescriptionAnalysis
+  Output: FitGapAnalysis { fit_points, gap_points, positioning_strategy }
+
+Stage 4 — compose_final
+  Input:  all three analyses + original job description
+  Output: TailoringLLMOutput (same schema as single-step mode)
+```
+
+**Enabling agentic mode:**
+
+```bash
+# .env
+WORKFLOW_MODE=agentic
+```
+
+Or keep the default:
+
+```
+WORKFLOW_MODE=single_step   ← default, preserves pre-M8 behaviour
+```
+
+**generation_attempts in agentic mode:**
+
+```
+4 stages, no fallback  → generation_attempts = 4
+4 stages, all fell back → generation_attempts = 8
+```
+
+**Fallback behaviour:**
+Each node independently applies provider fallback. If the configured LLM
+provider fails for a stage, that stage (and all subsequent stages) fall back
+to the mock provider. `fallback_used=True` is propagated to the run record.
+
+**What is intentionally not included:**
+- Parallel stage execution — the four stages are sequential because each stage
+  consumes output from the previous one
+- Conditional branching / retries at the graph level — straightforward chain
+  is sufficient at this stage
+- Streaming intermediate results — polling the final output is adequate here
+- Redis / Celery / Docker — still in-process, no external dependencies added
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - pgvector / embeddings
 - Redis / Celery / distributed workers
-- LangGraph workflow orchestration
 - Authentication / user accounts
 - Docker / CI/CD
 - External observability platforms (Datadog, OpenTelemetry)

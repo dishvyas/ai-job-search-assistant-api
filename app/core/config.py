@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     # Database. Defaults to local SQLite — no PostgreSQL needed for local dev or tests.
     database_url: str = "sqlite:///./local.db"
 
+    # Workflow mode. Controls whether generation uses the single-step path or the
+    # multi-stage agentic LangGraph workflow.
+    # Supported values: "single_step" | "agentic"
+    workflow_mode: str = "single_step"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
