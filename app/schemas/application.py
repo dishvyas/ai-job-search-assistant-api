@@ -70,3 +70,12 @@ class ApplicationTailoringRunResponse(BaseModel):
     provider_used: str | None = None
     fallback_used: bool
     created_at: datetime
+
+    # Workflow instrumentation — populated after background task runs
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    latency_ms: int | None = None
+    estimated_input_tokens: int | None = None
+    estimated_output_tokens: int | None = None
+    estimated_cost_usd: float | None = None
+    generation_attempts: int

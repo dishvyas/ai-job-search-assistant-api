@@ -389,6 +389,96 @@ alembic downgrade -1
 
 ---
 
+---
+
+## Milestone 7 — Workflow Metadata Tracking
+
+Adds lightweight instrumentation to every background generation job: timing,
+token estimates, cost estimates, and attempt counts. No external observability
+platform is needed — the metadata lives in the existing DB table and is exposed
+via the existing GET endpoint.
+
+**Why observability matters for AI systems:**
+LLM calls are slow, expensive, and occasionally unreliable. Without
+instrumentation you have no visibility into how long generation takes, whether
+the fallback path is being exercised, or what a job actually cost. Even a
+simple latency field transforms debugging from "it felt slow" to "that run
+took 4 200 ms vs the median 800 ms — here's why."
+
+**What's included:**
+- `app/llm/token_estimation.py` — `estimate_input_tokens`, `estimate_output_tokens`
+  using word-count approximation (`len(text.split())`). No tokenizer library.
+- `app/llm/cost_estimation.py` — `estimate_generation_cost(input_tokens, output_tokens, provider)`
+  with per-provider per-1K pricing constants. Mock = $0. Gemini ≈ industry pricing.
+- `app/models/application.py` — 7 new nullable/defaulted columns on `ApplicationTailoringRun`
+- `app/repositories/application_runs.py` — `save_completed_run` extended;
+  `update_run_status` accepts optional timing params (used on failure)
+- `app/services/background_tailoring.py` — records `started_at`, `completed_at`,
+  `latency_ms`, token estimates, cost, and `generation_attempts` on every run
+- `app/schemas/application.py` — all new fields exposed in `ApplicationTailoringRunResponse`
+- Alembic migration `c3d4e5f6a7b8` — 7 `ADD COLUMN` statements (no batch mode needed)
+- 36 new tests in `tests/test_workflow_metadata.py`
+
+**New columns on `application_tailoring_runs`:**
+
+| Column | Type | Description |
+|---|---|---|
+| `started_at` | DateTime nullable | When background task began executing |
+| `completed_at` | DateTime nullable | When background task finished |
+| `latency_ms` | Integer nullable | `(completed_at − started_at)` in ms |
+| `estimated_input_tokens` | Integer nullable | Word-count approx of prompt tokens |
+| `estimated_output_tokens` | Integer nullable | Word-count approx of output tokens |
+| `estimated_cost_usd` | Float nullable | Rough USD cost based on provider pricing |
+| `generation_attempts` | Integer default=0 | 1 = success; 2 = primary failed + fallback |
+
+**generation_attempts logic:**
+
+```
+Primary provider succeeds   → attempts = 1
+Primary fails, fallback runs → attempts = 2
+Non-LLM exception before result → attempts = 1 (call was attempted)
+Exception before LLM call       → attempts = 0
+```
+
+**Token estimation approach:**
+
+```python
+# app/llm/token_estimation.py
+def estimate_input_tokens(prompt: str) -> int:
+    return len(prompt.split())      # words ≈ tokens (rough)
+
+def estimate_output_tokens(output: str) -> int:
+    return len(output.split())
+```
+
+Real tokenizers (tiktoken, SentencePiece) are provider-specific and heavy.
+A word-count approximation gives a useful order-of-magnitude signal without
+the dependency. All cost figures are clearly marked as educational estimates.
+
+**Cost estimation approach:**
+
+```python
+# Approximate USD per 1 000 tokens (Gemini Flash class, as of writing)
+input:  $0.000075 / 1K tokens  (~$0.075 / 1M)
+output: $0.000300 / 1K tokens  (~$0.30  / 1M)
+mock / fallback-mock: $0.00
+```
+
+**Failed runs still capture partial metadata:**
+`started_at`, `completed_at`, `latency_ms`, and `generation_attempts` are
+written to the DB even when the job fails. This means debugging tools can
+answer "how long did it run before failing?" without needing full output data.
+
+**What is intentionally not included:**
+- Real tokenizer libraries (tiktoken, SentencePiece) — word-count is sufficient
+  for educational tracking; exact tokenization is provider-specific
+- External observability platforms (Datadog, OpenTelemetry, Prometheus) — the
+  data lives in the DB; a dashboard can be built from it later
+- Structured logging / trace IDs — future milestone
+- Percentile analytics / aggregation queries — future milestone
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - pgvector / embeddings
@@ -396,3 +486,4 @@ alembic downgrade -1
 - LangGraph workflow orchestration
 - Authentication / user accounts
 - Docker / CI/CD
+- External observability platforms (Datadog, OpenTelemetry)

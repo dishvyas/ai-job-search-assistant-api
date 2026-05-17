@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.models.application import ApplicationTailoringRun
@@ -29,11 +31,28 @@ def update_run_status(
     run: ApplicationTailoringRun,
     status: str,
     error_message: str | None = None,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
+    latency_ms: int | None = None,
+    generation_attempts: int | None = None,
 ) -> None:
-    """Transition a run to a new status, optionally recording an error message."""
+    """
+    Transition a run to a new status.
+
+    Optional timing/attempt fields are set when provided — used both for
+    the processing→failed path and can be extended for other transitions.
+    """
     run.status = status
     if error_message is not None:
         run.error_message = error_message
+    if started_at is not None:
+        run.started_at = started_at
+    if completed_at is not None:
+        run.completed_at = completed_at
+    if latency_ms is not None:
+        run.latency_ms = latency_ms
+    if generation_attempts is not None:
+        run.generation_attempts = generation_attempts
     db.add(run)
     db.commit()
 
@@ -44,8 +63,15 @@ def save_completed_run(
     llm_output: TailoringLLMOutput,
     provider_used: str,
     fallback_used: bool,
+    started_at: datetime,
+    completed_at: datetime,
+    latency_ms: int,
+    estimated_input_tokens: int,
+    estimated_output_tokens: int,
+    estimated_cost_usd: float,
+    generation_attempts: int,
 ) -> None:
-    """Persist generated output fields and mark the run as completed."""
+    """Persist generated output fields, workflow metadata, and mark the run completed."""
     fallback_note = " [Fallback mode used]" if fallback_used else ""
 
     run.tailored_summary = llm_output.tailored_summary + fallback_note
@@ -58,6 +84,15 @@ def save_completed_run(
     run.provider_used = provider_used
     run.fallback_used = fallback_used
     run.status = RunStatus.COMPLETED.value
+
+    # Workflow instrumentation
+    run.started_at = started_at
+    run.completed_at = completed_at
+    run.latency_ms = latency_ms
+    run.estimated_input_tokens = estimated_input_tokens
+    run.estimated_output_tokens = estimated_output_tokens
+    run.estimated_cost_usd = estimated_cost_usd
+    run.generation_attempts = generation_attempts
 
     db.add(run)
     db.commit()
