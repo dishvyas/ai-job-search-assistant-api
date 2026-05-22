@@ -14,8 +14,18 @@ def force_mock_llm_provider(monkeypatch):
     Override LLM provider to mock for every test, regardless of what is set
     in .env. This ensures tests are never coupled to a real API key or the
     local developer's environment.
+
+    Also force rag_enabled=False so background-job tests are not affected by a
+    local .env that sets RAG_ENABLED=true. Individual tests that exercise RAG
+    behaviour re-patch this to True explicitly.
     """
     monkeypatch.setattr("app.llm.factory.settings.llm_provider", "mock")
+    # Disable RAG globally — individual RAG tests re-enable it via monkeypatch.
+    # Without this, any local .env with RAG_ENABLED=true causes background-job
+    # tests to attempt a real OpenAI embedding call and fail.
+    monkeypatch.setattr("app.services.background_tailoring.settings.rag_enabled", False)
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.rag_enabled", False)
+    monkeypatch.setattr("app.api.v1.routes.jobs.settings.rag_enabled", False)
 
 
 @pytest.fixture

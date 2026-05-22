@@ -13,6 +13,8 @@ from app.llm.base import LLMProvider
 _RESUME_ANALYSIS_HEADER = "## Task: Analyze Resume"
 _JD_ANALYSIS_HEADER = "## Task: Analyze Job Description"
 _FIT_GAP_HEADER = "## Task: Analyze Fit and Gap"
+# M10: revision prompt header — triggers a complete, correction-specific response.
+_REVISION_HEADER = "## Task: Revise Output"
 
 # RAG-enriched prompts contain this header (injected by build_tailoring_prompt).
 # The mock detects it and returns a response that acknowledges the retrieved context,
@@ -35,6 +37,7 @@ class MockLLMProvider(LLMProvider):
         # Header-based dispatch — each agentic stage prompt embeds a unique header
         # so the mock can return the exact schema shape that stage expects.
         # RAG-enriched prompts get a response that mentions retrieved context.
+        # Revision prompts get a correction-specific response.
         # Prompts without a recognised header fall through to the default tailoring response.
         if _RESUME_ANALYSIS_HEADER in prompt:
             return self._resume_analysis_response()
@@ -42,6 +45,11 @@ class MockLLMProvider(LLMProvider):
             return self._jd_analysis_response()
         if _FIT_GAP_HEADER in prompt:
             return self._fit_gap_response()
+        if _REVISION_HEADER in prompt:
+            # Revision check must come before RAG check — a revision prompt could
+            # theoretically also contain retrieved context, but the revision header
+            # is the more specific and authoritative discriminator.
+            return self._revision_response()
         if _RAG_CONTEXT_HEADER in prompt:
             return self._rag_tailoring_response(prompt)
         return self._tailoring_response(prompt)
@@ -152,6 +160,49 @@ class MockLLMProvider(LLMProvider):
                     "[MOCK-RAG] Reference skills from retrieved similar roles",
                     "[MOCK-RAG] Highlight overlap with retrieved role requirements",
                     "[MOCK-RAG] Prepare questions about retrieved role responsibilities",
+                ],
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Revision response (M10 — corrects an incomplete output)
+    # ------------------------------------------------------------------
+
+    def _revision_response(self) -> str:
+        # Returns a complete TailoringLLMOutput with [MOCK-REVISED] markers so tests
+        # can verify that the revision path was taken rather than the normal path.
+        return json.dumps(
+            {
+                "tailored_summary": (
+                    "[MOCK-REVISED] Corrected tailored summary addressing review feedback."
+                ),
+                "tailored_bullets": [
+                    "[MOCK-REVISED] Revised achievement 1 with measurable impact",
+                    "[MOCK-REVISED] Revised achievement 2 addressing identified gaps",
+                    "[MOCK-REVISED] Revised achievement 3 with stronger role alignment",
+                ],
+                "cover_letter_draft": (
+                    "[MOCK-REVISED] Dear Hiring Manager,\n\n"
+                    "This revised letter directly addresses the review feedback.\n\n"
+                    "Sincerely,\n[Candidate Name]"
+                ),
+                "application_question_answers": [
+                    "[MOCK-REVISED] Revised answer 1 — more complete per review notes.",
+                    "[MOCK-REVISED] Revised answer 2 — stronger examples added.",
+                    "[MOCK-REVISED] Revised answer 3 — better alignment with JD.",
+                ],
+                "recruiter_message_draft": (
+                    "[MOCK-REVISED] Hi [Recruiter Name],\n\n"
+                    "This revised message better highlights my qualifications.\n\n"
+                    "Best,\n[Candidate Name]"
+                ),
+                "fit_gap_analysis": (
+                    "[MOCK-REVISED] Revised fit/gap analysis — all sections now complete."
+                ),
+                "interview_talking_points": [
+                    "[MOCK-REVISED] Revised talking point 1",
+                    "[MOCK-REVISED] Revised talking point 2",
+                    "[MOCK-REVISED] Revised talking point 3",
                 ],
             }
         )

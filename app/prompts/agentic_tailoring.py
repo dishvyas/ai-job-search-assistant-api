@@ -1,11 +1,15 @@
 """
-Prompt builders for the four-stage agentic tailoring workflow.
+Prompt builders for the agentic tailoring workflow.
 
 Each builder embeds a ## Task: <stage> header that the MockLLMProvider
 uses to detect which schema to return during testing.
 
 The final tailoring prompt produces the same JSON shape as the single-step
 tailoring prompt (TailoringLLMOutput), so the existing parsing pipeline is reused.
+
+M10 additions:
+- retrieved_context parameter on fit/gap and final prompts injects RAG snippets
+- build_revision_prompt for the optional review/revision step
 """
 
 # Each prompt builder is a pure function — no side effects, no LLM calls.
@@ -93,6 +97,7 @@ def build_fit_gap_prompt(
     request: ApplicationTailorRequest,
     resume_analysis: ResumeAnalysis,
     jd_analysis: JobDescriptionAnalysis,
+    retrieved_context: list[str] | None = None,
 ) -> str:
     """Stage 3 — identify fit points, gaps, and positioning strategy."""
     # Passing structured skill lists rather than raw resume/JD text keeps the prompt
@@ -101,29 +106,41 @@ def build_fit_gap_prompt(
     required_skills = ", ".join(jd_analysis.required_skills)
 
     # "## Task: Analyze Fit and Gap" header doubles as mock detection key.
-    return "\n".join(
-        [
-            "## Task: Analyze Fit and Gap",
+    sections = [
+        "## Task: Analyze Fit and Gap",
+        "",
+        "Given the resume analysis and job description analysis below, identify"
+        " fit points, gap points, and a positioning strategy.",
+        "Your response MUST be valid JSON only. No markdown, no code fences.",
+        "",
+        "Required JSON shape:",
+        _FIT_GAP_SCHEMA,
+        "",
+        "## Resume Skills",
+        resume_skills,
+        "",
+        "## Required Skills",
+        required_skills,
+        "",
+        "## Role Focus",
+        jd_analysis.role_focus,
+    ]
+
+    # Inject retrieved context as supporting signal — helps the LLM calibrate gap
+    # severity against what similar real roles actually require. Capped at 3 snippets
+    # to avoid blowing the prompt budget. User resume/JD always take precedence.
+    if retrieved_context:
+        sections += ["", "## Retrieved Context (from similar roles — for reference only)"]
+        for snippet in retrieved_context[:3]:
+            sections += ["", snippet[:300].strip()]
+        sections += [
             "",
-            "Given the resume analysis and job description analysis below, identify"
-            " fit points, gap points, and a positioning strategy.",
-            "Your response MUST be valid JSON only. No markdown, no code fences.",
-            "",
-            "Required JSON shape:",
-            _FIT_GAP_SCHEMA,
-            "",
-            "## Resume Skills",
-            resume_skills,
-            "",
-            "## Required Skills",
-            required_skills,
-            "",
-            "## Role Focus",
-            jd_analysis.role_focus,
-            "",
-            "Respond with the JSON object only. No explanation. No markdown.",
+            "Use the retrieved context above as background reference only."
+            " Base your analysis primarily on the resume and job description.",
         ]
-    )
+
+    sections += ["", "Respond with the JSON object only. No explanation. No markdown."]
+    return "\n".join(sections)
 
 
 def build_final_tailoring_prompt(
@@ -131,6 +148,7 @@ def build_final_tailoring_prompt(
     resume_analysis: ResumeAnalysis,
     jd_analysis: JobDescriptionAnalysis,
     fit_gap: FitGapAnalysis,
+    retrieved_context: list[str] | None = None,
 ) -> str:
     """Stage 4 — compose final application materials using all prior analyses."""
     # Slice to the top 2 fit points and 1 gap point to keep the prompt concise;
@@ -141,34 +159,87 @@ def build_final_tailoring_prompt(
     # No "## Task:" header here — the final stage returns TailoringLLMOutput, the
     # same shape as the single-step prompt, so the mock falls through to the default
     # _tailoring_response path automatically.
+    sections = [
+        "You are an expert career coach and resume writer.",
+        "",
+        "Using the structured analyses below, produce tailored job application materials.",
+        "Your response MUST be valid JSON only. No markdown, no code fences.",
+        "",
+        "Required JSON shape:",
+        _FINAL_TAILORING_SCHEMA,
+        "",
+        "## Key Skills (from resume)",
+        ", ".join(resume_analysis.key_skills),
+        "",
+        "## Role Requirements",
+        jd_analysis.role_focus,
+        "",
+        "## Fit Points",
+        fit_summary,
+        "",
+        "## Gap Points",
+        gap_summary,
+        "",
+        "## Positioning Strategy",
+        fit_gap.positioning_strategy,
+        "",
+        "## Original Job Description",
+        request.job_description,
+    ]
+
+    # Inject retrieved context last so the LLM's primary anchors are the structured
+    # analyses above. Retrieved context provides vocabulary and framing cues from
+    # real similar roles — useful for bullet phrasing and industry alignment.
+    if retrieved_context:
+        sections += ["", "## Retrieved Context (from similar roles — for reference only)"]
+        for snippet in retrieved_context[:3]:
+            sections += ["", snippet[:300].strip()]
+        sections += [
+            "",
+            "Use the retrieved context above as framing reference only."
+            " The resume and job description above are the primary sources of truth.",
+        ]
+
+    sections += ["", "Respond with the JSON object only. No explanation. No markdown."]
+    return "\n".join(sections)
+
+
+# ---------------------------------------------------------------------------
+# Revision prompt (M10 — optional single-pass correction)
+# ---------------------------------------------------------------------------
+
+# The ## Task: Revise Output header is detected by MockLLMProvider to return a
+# correction-specific response shape, distinct from the normal tailoring response.
+_REVISION_HEADER = "## Task: Revise Output"
+
+
+def build_revision_prompt(current_output_json: str, review_notes: str) -> str:
+    """
+    Build a prompt for the optional revision step.
+
+    Called only when the review node marks revision_needed=True. The LLM receives
+    the current (incomplete) output and the specific review notes so it can produce
+    a corrected, complete TailoringLLMOutput. At most one revision pass is made —
+    a second review is not performed to avoid any possibility of looping.
+    """
+    # The "## Task: Revise Output" header is the mock detection key for this stage.
     return "\n".join(
         [
-            "You are an expert career coach and resume writer.",
+            _REVISION_HEADER,
             "",
-            "Using the structured analyses below, produce tailored job application materials.",
+            "The previous output failed quality review. Produce a corrected, complete version.",
+            "Address the specific issues listed in the review notes below.",
             "Your response MUST be valid JSON only. No markdown, no code fences.",
+            "",
+            "Review notes (what to fix):",
+            review_notes,
             "",
             "Required JSON shape:",
             _FINAL_TAILORING_SCHEMA,
             "",
-            "## Key Skills (from resume)",
-            ", ".join(resume_analysis.key_skills),
+            "## Previous Output (improve this)",
+            current_output_json,
             "",
-            "## Role Requirements",
-            jd_analysis.role_focus,
-            "",
-            "## Fit Points",
-            fit_summary,
-            "",
-            "## Gap Points",
-            gap_summary,
-            "",
-            "## Positioning Strategy",
-            fit_gap.positioning_strategy,
-            "",
-            "## Original Job Description",
-            request.job_description,
-            "",
-            "Respond with the JSON object only. No explanation. No markdown.",
+            "Respond with the corrected JSON object only. No explanation. No markdown.",
         ]
     )

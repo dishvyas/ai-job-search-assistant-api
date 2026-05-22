@@ -665,6 +665,105 @@ POST /api/v1/jobs/compare
 
 ---
 
+## Milestone 10 — Tool-Using Agent Workflow with Review/Revision
+
+Upgrades the agentic workflow so it behaves more like a real AI agent system: it **retrieves external context as a tool**, applies **routing logic** based on that context, produces output, then runs a lightweight **review/revision cycle** before returning a result. The workflow runs whenever `WORKFLOW_MODE=agentic` — no new configuration knobs needed.
+
+**Why this goes beyond simple prompt chaining:**
+The previous agentic workflow (M8) was sequential prompt chaining with a fixed four-stage pipeline. M10 adds three properties that distinguish agent workflows from chains:
+
+1. **Tool use** — the `retrieve_context` node queries an external store (the vector DB) before any reasoning begins, incorporating real-world data into the agent's working context.
+2. **Routing decisions** — the `decide_route` node inspects intermediate state (fit/gap ratio, available context) and labels the run with a decision. This demonstrates how agents can branch based on what they observe, not just execute a fixed sequence.
+3. **Critique/revision loop** — the `review_output` node checks the final output for completeness, and the `revise_output` node corrects it if needed. This is the "reflection" pattern: the agent evaluates its own output and improves it — without human intervention.
+
+**Updated workflow (8 nodes):**
+
+```
+START
+  → retrieve_context      [tool use: RAG retrieval]
+  → analyze_resume        [LLM call]
+  → analyze_jd            [LLM call]
+  → analyze_fit_gap       [LLM call — enriched with retrieved context]
+  → decide_route          [deterministic: sets route_decision label]
+  → compose_final         [LLM call — enriched with retrieved context]
+  → review_output         [deterministic: checks output completeness]
+  → [if revision_needed]
+      revise_output       [LLM call — corrects incomplete output]
+  → END
+```
+
+**Context retrieval node (`retrieve_context`):**
+When `RAG_ENABLED=true` and a DB session is available, the workflow queries the vector DB using the job description text as the query. Retrieved snippets (up to 3, truncated at 300 chars each) are stored in `retrieved_context` state and injected into the fit/gap and final composition prompts. If retrieval is disabled, unavailable, or fails — the workflow continues with an empty context list. No exceptions propagate from this node.
+
+**How context is used in prompts:**
+Retrieved snippets are clearly labeled as `## Retrieved Context (from similar roles — for reference only)`. The prompt explicitly instructs the LLM to treat them as reference material, not as override instructions. The candidate's resume and job description remain the primary sources of truth.
+
+**Routing decision node (`decide_route`):**
+Deterministic logic — no LLM call:
+
+| Condition | Route |
+|---|---|
+| No retrieved context AND no `company_info` | `needs_more_context` |
+| `gap_points > fit_points` (from fit/gap analysis) | `low_fit_warning` |
+| Otherwise | `proceed_to_tailoring` |
+
+Routes are **advisory metadata** — the workflow always proceeds to composition regardless of the route decision. Hard-gating (e.g., refusing to generate for low-fit candidates) is a product-level decision that doesn't belong in a generic tailoring service. The route label is available for callers that want to surface it in a UI.
+
+**Review node (`review_output`):**
+Checks three structural conditions:
+- `tailored_summary` is non-empty
+- `tailored_bullets` is non-empty
+- `interview_talking_points` is non-empty
+
+If all pass → `revision_needed = False`, `review_notes = "Review passed..."`.
+If any fail → `revision_needed = True`, `review_notes` describes what was missing.
+
+Review is **deterministic** (no LLM call): cheaper, faster, fully auditable. The structural check catches the most common failure mode — a truncated or malformed LLM output missing required sections.
+
+**Revision node (`revise_output`):**
+Called only when `revision_needed = True`. Makes a single LLM call with the current (incomplete) output and the review notes, producing a corrected `TailoringLLMOutput`. After revision, the graph always goes to `END` — no second review is performed. This is intentional: at most one revision pass avoids any possibility of a correction loop.
+
+**Updated state fields:**
+
+```python
+class AgenticTailoringState(TypedDict):
+    request: ApplicationTailorRequest
+    db: Any                    # SQLAlchemy session | None — for RAG tool use
+    resume_analysis: ...       # M8: unchanged
+    jd_analysis: ...           # M8: unchanged
+    fit_gap: ...               # M8: unchanged
+    final_output: ...          # M8: unchanged
+    retrieved_context: list[str]   # NEW: text snippets from RAG
+    route_decision: str            # NEW: advisory routing label
+    review_notes: str | None       # NEW: outcome of the quality review
+    revision_needed: bool          # NEW: whether revision was triggered
+    provider_used: str
+    fallback_used: bool
+```
+
+**Key tradeoffs:**
+
+| Aspect | Tradeoff |
+|---|---|
+| More LLM calls | Up to 5 calls (4 stages + 1 revision) vs 4 previously. Higher cost and latency per request. Worth it when output completeness matters more than speed. |
+| More explainable and controllable | Every decision (route, review pass/fail, revision trigger) is logged in state and can be inspected. This is the opposite of a black-box call to a single large model. |
+| Deterministic routing and review | No extra LLM spend for decisions that can be made with logic. Keeps the cost increase predictable: only composition and (rarely) revision use the LLM. |
+| No real looping | The graph prevents revision loops by design. A production system might allow multiple revision rounds, but that requires convergence guarantees that are out of scope here. |
+| Context is optional | When RAG is disabled or retrieval returns nothing, all seven nodes run exactly as before. No behavioral change for `RAG_ENABLED=false` deployments. |
+
+**This is controlled orchestration, not a fully autonomous agent:**
+The graph structure, transition logic, and decision rules are all hardcoded in Python. The LLM cannot add nodes, modify the workflow, or call tools it wasn't given. This is intentional — for a production portfolio project, predictability and debuggability matter more than autonomy. The architecture demonstrates the key agent patterns (tool use, routing, reflection) without the risks of an open-ended agent that can take arbitrary actions.
+
+**What was intentionally not implemented:**
+- Conditional routing that skips composition for `low_fit_warning` (product decision out of scope)
+- Semantic review via LLM-as-judge (cost and latency tradeoff not justified here)
+- Multiple revision rounds (would require convergence logic)
+- Exposing `route_decision` and `review_notes` in the API response (schema change deferred)
+- Parallel node execution (retrieval could run in parallel with analysis; not needed at this scale)
+- 30 new tests in `tests/test_agent_tools_review.py`
+
+---
+
 ## Not Included Yet (Intentionally)
 
 - Redis / Celery / distributed workers

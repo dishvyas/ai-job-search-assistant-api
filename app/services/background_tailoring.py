@@ -88,10 +88,12 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
                 generation_attempts = 2
 
         else:  # agentic
-            # 4 stages × 1 call each; double if any stage fell back (approximate).
-            # This is intentionally an approximation: if only 2 of 4 stages fell back
-            # the real count would be 6, but we record 8. Simpler and conservative.
-            llm_output, provider_used, used_fallback = run_agentic_workflow(request)
+            # Pass the db session so the retrieve_context node can perform RAG tool use.
+            # If rag_enabled=False, the node skips retrieval and db is unused.
+            # Generation attempt accounting: 4 analysis/composition stages + optional
+            # revision (absorbed into approximation); doubled if any stage fell back.
+            # This intentionally approximates rather than tracking every possible path.
+            llm_output, provider_used, used_fallback = run_agentic_workflow(request, db=db)
             generation_attempts = 4 + (4 if used_fallback else 0)
 
         completed_at = datetime.now(UTC)
