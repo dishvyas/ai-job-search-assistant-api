@@ -1,3 +1,8 @@
+# Two distinct exception hierarchies — one for provider failures, one for output
+# failures — because the recovery action differs:
+#   LLMProviderError     → retry or fall back to mock (provider is broken)
+#   LLMOutputParsingError → fall back to mock (provider worked, output was malformed)
+# Keeping them separate means callers can catch each case independently if needed.
 class LLMProviderError(Exception):
     """Base exception for all LLM provider failures."""
 

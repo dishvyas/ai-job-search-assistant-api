@@ -1,3 +1,7 @@
+# Single-step tailoring service — one LLM call that produces the full output.
+# Separated from the route handler so the fallback logic can be unit-tested
+# without an HTTP client. The leading underscore signals this is not public API;
+# background_tailoring.py is the only caller.
 from app.core.config import settings
 from app.llm.exceptions import LLMOutputParsingError, LLMProviderError
 from app.llm.factory import get_llm_provider
@@ -29,7 +33,10 @@ def _get_llm_output(prompt: str) -> tuple[TailoringLLMOutput, str, bool]:
         pass  # provider unavailable — fall through to mock
     except LLMOutputParsingError:
         pass  # provider returned malformed output — fall through to mock
+    # Two separate except clauses (not a tuple) so each failure mode is
+    # individually legible; both have the same recovery action.
 
     fallback = MockLLMProvider()
     raw = fallback.generate_text(prompt)
+    # If mock also fails here it is a code bug, not a runtime condition — let it raise.
     return parse_tailoring_response(raw), "fallback-mock", True

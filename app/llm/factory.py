@@ -1,3 +1,6 @@
+# Factory function that maps the LLM_PROVIDER setting to a concrete implementation.
+# This is the single place that knows about concrete provider classes — all other
+# code depends on the LLMProvider interface and never imports Gemini or Mock directly.
 from app.core.config import settings
 from app.llm.base import LLMProvider
 
@@ -13,11 +16,15 @@ def get_llm_provider() -> LLMProvider:
     provider = settings.llm_provider.lower()
 
     if provider == "mock":
+        # Lazy import — avoids loading mock.py at module import time, which keeps
+        # startup clean and makes the import graph easier to follow.
         from app.llm.mock import MockLLMProvider
 
         return MockLLMProvider()
 
     if provider == "gemini":
+        # Lazy import — google-genai is an optional dependency; importing it here
+        # means tests that don't set LLM_PROVIDER=gemini never need it installed.
         from app.llm.gemini import GeminiLLMProvider
 
         return GeminiLLMProvider(

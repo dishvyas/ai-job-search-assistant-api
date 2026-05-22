@@ -1,3 +1,6 @@
+# Repository layer — all DB read/write operations for ApplicationTailoringRun live here.
+# Keeping DB logic out of routes and services keeps each layer testable in isolation:
+# routes can be tested without a real DB, and services can be tested without HTTP.
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -22,6 +25,7 @@ def create_pending_run(
     )
     db.add(run)
     db.commit()
+    # refresh so run.id is populated from the DB-generated primary key before returning.
     db.refresh(run)
     return run
 
@@ -43,6 +47,8 @@ def update_run_status(
     the processing→failed path and can be extended for other transitions.
     """
     run.status = status
+    # Only update optional fields when explicitly provided — avoids overwriting
+    # previously-set values with None when the caller omits them.
     if error_message is not None:
         run.error_message = error_message
     if started_at is not None:
@@ -72,6 +78,8 @@ def save_completed_run(
     generation_attempts: int,
 ) -> None:
     """Persist generated output fields, workflow metadata, and mark the run completed."""
+    # Append a visible signal to human-readable fields so callers can tell at a glance
+    # that the output came from the fallback provider, not the configured one.
     fallback_note = " [Fallback mode used]" if fallback_used else ""
 
     run.tailored_summary = llm_output.tailored_summary + fallback_note
@@ -100,4 +108,6 @@ def save_completed_run(
 
 def get_application_tailoring_run(db: Session, run_id: int) -> ApplicationTailoringRun | None:
     """Return a single run by ID, or None if not found."""
+    # db.get uses the identity map — returns the cached instance if already loaded
+    # in this session, avoiding a redundant SELECT.
     return db.get(ApplicationTailoringRun, run_id)

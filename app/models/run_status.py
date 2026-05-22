@@ -1,3 +1,6 @@
+# StrEnum so that RunStatus.PENDING == "pending" is True without calling .value.
+# This means status can be stored and compared as a plain string in SQLAlchemy
+# without a custom TypeDecorator or explicit .value calls everywhere.
 from enum import StrEnum
 
 

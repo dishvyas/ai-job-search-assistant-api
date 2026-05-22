@@ -1,3 +1,6 @@
+# Dedicated parsing module for the single-step workflow's LLM response.
+# Isolating parsing here means the fallback logic in application_tailoring.py
+# can catch LLMOutputParsingError without knowing anything about JSON or Pydantic.
 import json
 
 from pydantic import ValidationError
@@ -14,6 +17,8 @@ def parse_tailoring_response(raw_text: str) -> TailoringLLMOutput:
     - the text is not valid JSON
     - the JSON does not match the expected schema
     """
+    # Two-phase parse: JSON decode first, then schema validation.
+    # This gives a clearer error message — "not JSON at all" vs "wrong shape".
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError as e:

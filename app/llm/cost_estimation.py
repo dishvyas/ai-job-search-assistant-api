@@ -51,7 +51,8 @@ def _resolve_provider_key(provider: str) -> str:
     """Map a provider_used value to the pricing table key."""
     if provider in _INPUT_COST_PER_1K:
         return provider
+    # Handles variant model names like "gemini-2.5-flash" that aren't in the table directly.
     if provider.startswith("gemini"):
         return "gemini"
-    # Unknown provider — treat as free to avoid crashing
+    # Unknown provider — treat as free to avoid crashing on new providers added in future.
     return "mock"

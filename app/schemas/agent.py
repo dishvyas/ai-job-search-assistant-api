@@ -1,3 +1,7 @@
+# Intermediate Pydantic schemas for the agentic workflow's three analysis stages.
+# Each stage forces the LLM to produce a narrow, schema-validated output rather than
+# free text — this is the key reliability benefit of the multi-stage approach.
+# These are internal types; they are never serialised into API responses directly.
 from pydantic import BaseModel
 
 

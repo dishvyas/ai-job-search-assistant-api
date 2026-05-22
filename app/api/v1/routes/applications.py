@@ -1,3 +1,5 @@
+# HTTP layer — deliberately thin. Routes only validate input, call the repository
+# or service layer, and return the response. No business logic lives here.
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -28,7 +30,10 @@ def tailor(
     — do not wait for AI output.
     """
     run = create_pending_run(db, request)
+    # Pass db explicitly so the background task uses the same session that is
+    # alive for this request's lifetime — avoids a second get_db() call in the task.
     background_tasks.add_task(process_tailoring_job, run.id, db)
+    # Return the pending receipt immediately; the caller polls GET /runs/{run_id}.
     return ApplicationTailoringJobResponse(run_id=run.id, status=run.status)
 
 
@@ -47,4 +52,6 @@ def get_run(
     run = get_application_tailoring_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    # model_validate with from_attributes=True maps the ORM instance to the
+    # response schema without needing an explicit .dict() or field-by-field copy.
     return ApplicationTailoringRunResponse.model_validate(run)

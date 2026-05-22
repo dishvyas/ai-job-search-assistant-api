@@ -19,6 +19,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Milestone 5 schema — synchronous workflow, output available immediately.
+    # All output columns are NOT NULL because in M5 the API returned output synchronously;
+    # they were made nullable in migration b2c3d4e5f6a7 when async background jobs were added.
     op.create_table(
         "application_tailoring_runs",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -26,6 +29,8 @@ def upgrade() -> None:
         sa.Column("job_description", sa.Text(), nullable=False),
         sa.Column("company_info", sa.Text(), nullable=True),
         sa.Column("user_preferences", sa.Text(), nullable=True),
+        # JSON columns for list-valued fields — avoids separate junction tables
+        # for data that is always read and written as a unit.
         sa.Column("tailored_summary", sa.Text(), nullable=False),
         sa.Column("tailored_bullets", sa.JSON(), nullable=False),
         sa.Column("cover_letter_draft", sa.Text(), nullable=False),

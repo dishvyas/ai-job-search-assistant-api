@@ -1,3 +1,7 @@
+# Orchestrates the full background job lifecycle: status transitions, LLM dispatch,
+# and metadata recording. This is the single function registered as a FastAPI
+# BackgroundTask — it runs in-process after the HTTP response is sent, so there is
+# no Redis, Celery, or external broker required at this stage.
 import json
 from datetime import UTC, datetime
 
@@ -17,6 +21,8 @@ from app.schemas.application import ApplicationTailorRequest
 from app.services.agentic_tailoring import run_agentic_workflow
 from app.services.application_tailoring import _get_llm_output
 
+# Explicit allowlist — an unsupported mode fails fast with a clear error rather than
+# silently doing nothing or falling through to unexpected behaviour.
 _SUPPORTED_MODES = {"single_step", "agentic"}
 
 
@@ -32,14 +38,19 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
     caught by the exception handler and stored as a failed run.
     """
     run = get_application_tailoring_run(db, run_id)
+    # Guard against the (unlikely) race where the row was deleted after the task was enqueued.
     if run is None:
         return
 
+    # Mark processing before the LLM call so the GET endpoint reflects real-time state.
     update_run_status(db, run, RunStatus.PROCESSING.value)
     started_at = datetime.now(UTC)
+    # Initialised to 0 so that a failure before any LLM call is recorded as 0 attempts.
     generation_attempts = 0
 
     try:
+        # Reconstruct a validated Pydantic request from the persisted ORM row so that
+        # service functions receive the same type as the original HTTP handler.
         request = ApplicationTailorRequest(
             master_resume=run.master_resume,
             job_description=run.job_description,
@@ -53,17 +64,33 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
                 f"Unsupported workflow_mode: {mode!r}. Must be one of: {sorted(_SUPPORTED_MODES)}"
             )
 
+        # Optionally retrieve RAG context to enrich the tailoring prompt.
+        # When rag_enabled=False (the default), this block is skipped entirely and
+        # the existing single-step/agentic behaviour is completely unchanged.
+        rag_context = None
+        if settings.rag_enabled:
+            from app.rag.retrieve import retrieve_relevant_jobs
+
+            retrieved = retrieve_relevant_jobs(db, query=request.job_description)
+            # retrieve_relevant_jobs returns (jd, score) tuples; we only need the jd.
+            rag_context = [jd for jd, _score in retrieved]
+
         # Build the single-step prompt; used for input token estimation in both modes.
-        prompt = build_tailoring_prompt(request)
+        # In agentic mode the prompt approximates only the final stage — acceptable
+        # because intermediate stage prompts are similar in size to the full prompt.
+        prompt = build_tailoring_prompt(request, rag_context=rag_context)
 
         if mode == "single_step":
             generation_attempts = 1
             llm_output, provider_used, used_fallback = _get_llm_output(prompt)
+            # Each fallback = one additional attempt (primary failed, mock succeeded).
             if used_fallback:
                 generation_attempts = 2
 
         else:  # agentic
             # 4 stages × 1 call each; double if any stage fell back (approximate).
+            # This is intentionally an approximation: if only 2 of 4 stages fell back
+            # the real count would be 6, but we record 8. Simpler and conservative.
             llm_output, provider_used, used_fallback = run_agentic_workflow(request)
             generation_attempts = 4 + (4 if used_fallback else 0)
 
@@ -94,8 +121,11 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
         )
 
     except Exception as exc:  # noqa: BLE001
+        # Broad catch is intentional — any unhandled exception (config error, DB error,
+        # LLM parse failure) must be recorded as a failed run, never silently swallowed.
         completed_at = datetime.now(UTC)
         latency_ms = int((completed_at - started_at).total_seconds() * 1000)
+        # Write timing even on failure so debugging can answer "how long before it failed?".
         update_run_status(
             db,
             run,

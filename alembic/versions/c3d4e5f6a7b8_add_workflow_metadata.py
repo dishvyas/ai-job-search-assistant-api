@@ -30,6 +30,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Simple ADD COLUMN statements — no batch mode needed because we're only adding
+    # new nullable columns or columns with server_default, not modifying existing ones.
+    # All timing/token fields are nullable so existing rows are unaffected.
     op.add_column(
         "application_tailoring_runs",
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
@@ -60,7 +63,9 @@ def upgrade() -> None:
             "generation_attempts",
             sa.Integer(),
             nullable=False,
-            server_default="0",  # existing rows default to 0
+            # server_default="0" so existing rows (M5/M6) get a valid integer,
+            # not NULL, which would violate the NOT NULL constraint.
+            server_default="0",
         ),
     )
 

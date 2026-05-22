@@ -8,10 +8,15 @@ The final tailoring prompt produces the same JSON shape as the single-step
 tailoring prompt (TailoringLLMOutput), so the existing parsing pipeline is reused.
 """
 
+# Each prompt builder is a pure function — no side effects, no LLM calls.
+# This makes prompts testable in isolation and easy to iterate on without
+# touching any service logic.
 from app.schemas.agent import FitGapAnalysis, JobDescriptionAnalysis, ResumeAnalysis
 from app.schemas.application import ApplicationTailorRequest
 
 # JSON shape examples shown to the LLM in each prompt.
+# Using a concrete example (not an abstract schema) because LLMs follow
+# patterns more reliably than abstract type descriptions.
 _RESUME_ANALYSIS_SCHEMA = """{
   "key_skills": ["string"],
   "relevant_experience": ["string"],
@@ -43,6 +48,8 @@ _FINAL_TAILORING_SCHEMA = """{
 
 def build_resume_analysis_prompt(request: ApplicationTailorRequest) -> str:
     """Stage 1 — extract structured information from the candidate's resume."""
+    # The "## Task: Analyze Resume" header serves a dual purpose: it guides the LLM
+    # and it is the string the MockLLMProvider checks to return the correct JSON shape.
     return "\n".join(
         [
             "## Task: Analyze Resume",
@@ -63,6 +70,7 @@ def build_resume_analysis_prompt(request: ApplicationTailorRequest) -> str:
 
 def build_jd_analysis_prompt(request: ApplicationTailorRequest) -> str:
     """Stage 2 — extract structured information from the job description."""
+    # "## Task: Analyze Job Description" header doubles as mock detection key.
     return "\n".join(
         [
             "## Task: Analyze Job Description",
@@ -87,9 +95,12 @@ def build_fit_gap_prompt(
     jd_analysis: JobDescriptionAnalysis,
 ) -> str:
     """Stage 3 — identify fit points, gaps, and positioning strategy."""
+    # Passing structured skill lists rather than raw resume/JD text keeps the prompt
+    # focused — the LLM has already done the extraction work in stages 1 and 2.
     resume_skills = ", ".join(resume_analysis.key_skills)
     required_skills = ", ".join(jd_analysis.required_skills)
 
+    # "## Task: Analyze Fit and Gap" header doubles as mock detection key.
     return "\n".join(
         [
             "## Task: Analyze Fit and Gap",
@@ -122,9 +133,14 @@ def build_final_tailoring_prompt(
     fit_gap: FitGapAnalysis,
 ) -> str:
     """Stage 4 — compose final application materials using all prior analyses."""
+    # Slice to the top 2 fit points and 1 gap point to keep the prompt concise;
+    # the full lists are available in prior state if the LLM needs more context.
     fit_summary = "; ".join(fit_gap.fit_points[:2])
     gap_summary = "; ".join(fit_gap.gap_points[:1])
 
+    # No "## Task:" header here — the final stage returns TailoringLLMOutput, the
+    # same shape as the single-step prompt, so the mock falls through to the default
+    # _tailoring_response path automatically.
     return "\n".join(
         [
             "You are an expert career coach and resume writer.",

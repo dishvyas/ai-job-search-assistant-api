@@ -1,12 +1,23 @@
+# Mock LLM provider — the cornerstone of offline testing.
+# It exists so that every test runs without a real API key, without network calls,
+# and with fully deterministic output. This means CI is fast, free, and never flaky
+# due to external service availability.
 import json
 
 from app.llm.base import LLMProvider
 
 # Stage-header keywords used by the agentic prompt builders.
 # The mock detects these to return the correct JSON shape for each stage.
+# These constants mirror the headers in app/prompts/agentic_tailoring.py —
+# if a header changes there, it must change here too to keep tests in sync.
 _RESUME_ANALYSIS_HEADER = "## Task: Analyze Resume"
 _JD_ANALYSIS_HEADER = "## Task: Analyze Job Description"
 _FIT_GAP_HEADER = "## Task: Analyze Fit and Gap"
+
+# RAG-enriched prompts contain this header (injected by build_tailoring_prompt).
+# The mock detects it and returns a response that acknowledges the retrieved context,
+# making it possible for tests to verify that RAG enrichment changed the prompt.
+_RAG_CONTEXT_HEADER = "## Similar Roles (retrieved for context)"
 
 
 class MockLLMProvider(LLMProvider):
@@ -21,12 +32,18 @@ class MockLLMProvider(LLMProvider):
     """
 
     def generate_text(self, prompt: str) -> str:
+        # Header-based dispatch — each agentic stage prompt embeds a unique header
+        # so the mock can return the exact schema shape that stage expects.
+        # RAG-enriched prompts get a response that mentions retrieved context.
+        # Prompts without a recognised header fall through to the default tailoring response.
         if _RESUME_ANALYSIS_HEADER in prompt:
             return self._resume_analysis_response()
         if _JD_ANALYSIS_HEADER in prompt:
             return self._jd_analysis_response()
         if _FIT_GAP_HEADER in prompt:
             return self._fit_gap_response()
+        if _RAG_CONTEXT_HEADER in prompt:
+            return self._rag_tailoring_response(prompt)
         return self._tailoring_response(prompt)
 
     # ------------------------------------------------------------------
@@ -94,10 +111,58 @@ class MockLLMProvider(LLMProvider):
         )
 
     # ------------------------------------------------------------------
+    # RAG-enriched tailoring response
+    # ------------------------------------------------------------------
+
+    def _rag_tailoring_response(self, prompt: str) -> str:
+        # Returns a TailoringLLMOutput where tailored_summary explicitly mentions
+        # that retrieved context was used — allows tests to assert the RAG path
+        # produced a different response from the plain path.
+        prompt_preview = prompt[:60].strip().replace("\n", " ")
+        return json.dumps(
+            {
+                "tailored_summary": (
+                    f"[MOCK-RAG] Tailored summary using retrieved context: '{prompt_preview}...'"
+                ),
+                "tailored_bullets": [
+                    "[MOCK-RAG] Achievement aligned with retrieved role requirements",
+                    "[MOCK-RAG] Skill match highlighted from retrieved similar roles",
+                    "[MOCK-RAG] Impact framed using vocabulary from retrieved JDs",
+                ],
+                "cover_letter_draft": (
+                    "[MOCK-RAG] Dear Hiring Manager,\n\n"
+                    "Based on similar roles I have reviewed, my background closely aligns "
+                    "with this position.\n\nSincerely,\n[Candidate Name]"
+                ),
+                "application_question_answers": [
+                    "[MOCK-RAG] My experience maps directly to the retrieved role requirements.",
+                    "[MOCK-RAG] I bring skills common to similar roles in this domain.",
+                    "[MOCK-RAG] Retrieved context confirms this role is a strong match.",
+                ],
+                "recruiter_message_draft": (
+                    "[MOCK-RAG] Hi [Recruiter Name],\n\n"
+                    "I have reviewed similar roles and believe my background is a strong fit.\n\n"
+                    "Best,\n[Candidate Name]"
+                ),
+                "fit_gap_analysis": (
+                    "[MOCK-RAG] FIT: Skills align with retrieved similar roles. "
+                    "GAP: Some requirements identified in retrieved JDs not yet covered."
+                ),
+                "interview_talking_points": [
+                    "[MOCK-RAG] Reference skills from retrieved similar roles",
+                    "[MOCK-RAG] Highlight overlap with retrieved role requirements",
+                    "[MOCK-RAG] Prepare questions about retrieved role responsibilities",
+                ],
+            }
+        )
+
+    # ------------------------------------------------------------------
     # Default: TailoringLLMOutput shape (single-step + agentic final stage)
     # ------------------------------------------------------------------
 
     def _tailoring_response(self, prompt: str) -> str:
+        # Embed a snippet of the prompt in tailored_summary so tests can verify
+        # that the correct prompt was passed without parsing the full prompt string.
         prompt_preview = prompt[:60].strip().replace("\n", " ")
         return json.dumps(
             {

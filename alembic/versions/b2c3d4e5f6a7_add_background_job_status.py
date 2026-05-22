@@ -27,7 +27,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Use batch mode for full SQLite compatibility (ALTER COLUMN support).
+    # batch_alter_table is required for SQLite: SQLite does not support ALTER COLUMN
+    # natively. Alembic's batch mode recreates the table behind the scenes, which
+    # works transparently on both SQLite and PostgreSQL.
     with op.batch_alter_table("application_tailoring_runs") as batch_op:
         # New workflow columns
         batch_op.add_column(
@@ -35,12 +37,15 @@ def upgrade() -> None:
                 "status",
                 sa.Text(),
                 nullable=False,
-                server_default="completed",  # existing M5 rows are already complete
+                # server_default="completed" ensures existing M5 rows are valid —
+                # they were created synchronously and already have output populated.
+                server_default="completed",
             )
         )
         batch_op.add_column(sa.Column("error_message", sa.Text(), nullable=True))
 
-        # Make AI output columns nullable (they start NULL for new pending rows)
+        # Make AI output columns nullable so pending rows can be inserted with NULLs
+        # before the background task runs. Previously these were NOT NULL (M5 sync API).
         batch_op.alter_column("tailored_summary", existing_type=sa.Text(), nullable=True)
         batch_op.alter_column("tailored_bullets", existing_type=sa.JSON(), nullable=True)
         batch_op.alter_column("cover_letter_draft", existing_type=sa.Text(), nullable=True)
@@ -50,6 +55,7 @@ def upgrade() -> None:
         batch_op.alter_column("recruiter_message_draft", existing_type=sa.Text(), nullable=True)
         batch_op.alter_column("fit_gap_analysis", existing_type=sa.Text(), nullable=True)
         batch_op.alter_column("interview_talking_points", existing_type=sa.JSON(), nullable=True)
+        # provider_used is nullable because it is only known after generation completes.
         batch_op.alter_column("provider_used", existing_type=sa.Text(), nullable=True)
 
 

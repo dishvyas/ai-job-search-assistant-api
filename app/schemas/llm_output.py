@@ -1,3 +1,6 @@
+# Separate internal schema for the LLM's JSON contract.
+# Keeping this distinct from ApplicationTailorResponse (the API output schema) means
+# the LLM prompt contract can evolve independently from what the API exposes.
 from pydantic import BaseModel
 
 

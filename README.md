@@ -569,9 +569,104 @@ to the mock provider. `fallback_used=True` is propagated to the run record.
 
 ---
 
+---
+
+## Milestone 9 — RAG Job Matching
+
+Introduces an optional **Retrieval-Augmented Generation (RAG) pipeline** for job description matching. When enabled, the most semantically similar stored job descriptions are retrieved and injected into the tailoring prompt — providing real-world vocabulary, skill requirements, and role context that improves the specificity of generated application materials. RAG is **disabled by default**; all existing workflow behaviour is fully preserved.
+
+**Why RAG improves tailoring quality:**
+Prompting an LLM with only a single job description is limited — the model reasons from its training data, which may not reflect current market language or the specific skills your target company values. Retrieved similar roles provide concrete grounding: the prompt can say "here are three roles where this skill matters and is phrased this way" rather than asking the model to guess from scratch.
+
+**What's included:**
+- `app/rag/embed.py` — `generate_embedding(text)` wraps the OpenAI embeddings API
+- `app/rag/ingest.py` — `ingest_job_description(db, ...)` embeds `raw_text` and stores the record
+- `app/rag/retrieve.py` — `retrieve_relevant_jobs(db, query, ...)` with query enrichment, cosine similarity search, metadata filters, and similarity threshold
+- `app/rag/eval.py` — `score_retrieval(query, retrieved_jobs)` — keyword-overlap coverage signal
+- `app/models/job_description.py` — `JobDescription` ORM model with `Vector(1536)` embedding column
+- `app/schemas/jobs.py` — request/response schemas for jobs routes
+- `app/api/v1/routes/jobs.py` — three new routes: `/ingest`, `/match`, `/compare`
+- `app/prompts/tailoring.py` — updated to accept optional `rag_context` parameter
+- `app/llm/mock.py` — RAG-enriched prompt detection + deterministic `[MOCK-RAG]` response
+- Alembic migration `d4e5f6a7b8c9` — creates `job_descriptions` table with pgvector extension
+- 21 new tests in `tests/test_rag.py`
+
+**Enabling RAG locally (requires PostgreSQL + pgvector):**
+
+```bash
+# .env
+RAG_ENABLED=true
+OPENAI_API_KEY=your-key-here
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/dbname
+
+# Apply migration (creates pgvector extension + job_descriptions table)
+alembic upgrade head
+```
+
+**Ingestion flow:**
+
+```
+POST /api/v1/jobs/ingest
+  body: { title, company, location, raw_text, metadata }
+  → generate_embedding(raw_text)          # OpenAI API call
+  → INSERT INTO job_descriptions          # stores text + vector
+  → return { job_description_id, title, created_at }
+```
+
+We embed `raw_text` rather than just the `title` because the title alone ("Senior Engineer") is too generic. Skills, responsibilities, and requirements in the body text carry the semantic signal needed for meaningful similarity.
+
+**Retrieval flow:**
+
+```
+POST /api/v1/jobs/match
+  body: { query, filters (optional), top_k (optional) }
+  → enrich query with filter context         # improves vector specificity
+  → generate_embedding(enriched_query)
+  → SELECT ... ORDER BY embedding <=> query  # cosine similarity via pgvector
+  → apply metadata filters (WHERE)           # precision improvement
+  → discard matches below similarity_threshold
+  → return ranked list with similarity scores
+```
+
+**Before/after compare endpoint:**
+
+```
+POST /api/v1/jobs/compare
+  body: { query, resume_summary }
+  → LLM call 1: plain prompt (no RAG)       # without_rag response
+  → retrieve_relevant_jobs(query)            # if RAG enabled
+  → LLM call 2: prompt + retrieved context  # with_rag response
+  → return { without_rag, with_rag, retrieved_jobs }
+```
+
+**Key design decisions:**
+
+| Decision | Why |
+|---|---|
+| pgvector over dedicated vector DB | Keeps the stack simple — one database for relational data and vectors. For this scale, pgvector's ANN search is fast enough. A dedicated vector store (Pinecone, Weaviate) adds operational overhead without meaningful quality gain at this scale. |
+| Query enrichment before embedding | A plain query ("Python backend engineer") embeds to a generic vector. Appending filter context ("role_type: backend, seniority: senior") shifts the vector toward the specific semantic neighbourhood, reducing false matches. |
+| Semantic + metadata filters combined | Semantic search alone can return plausible-but-wrong results (e.g. a data engineering role when looking for backend). Metadata filters act as hard constraints that eliminate whole categories before distance ranking — improves precision without hurting recall on the filtered set. |
+| Similarity threshold | Returning the top-k unconditionally is dangerous when the corpus is small or the query is unusual. A low-similarity "best match" that is still semantically distant from the query adds noise to the prompt, which can actively mislead the LLM. |
+| Embed raw_text not just title | A title like "Senior Engineer" has ~0 discriminative power. The full JD text contains the skills, stack, responsibilities, and culture signals that determine whether a role is actually similar. |
+| RAG disabled by default | The existing tailoring workflow is unaffected when `RAG_ENABLED=false`. No embedding API calls happen, no pgvector extension is required, SQLite still works for local dev and tests. |
+
+**Known limitations and what production RAG would add:**
+- No incremental index update — currently re-embeds on ingest; production would batch-update
+- No ANN index (IVFFlat/HNSW) — full scan works for small corpora, becomes expensive at scale
+- Token budget management — the current implementation truncates retrieved text at 500 chars; production would use a token budget tied to the model's context window
+- Eval is keyword-overlap only — production would use human-labelled pairs + nDCG/MRR
+- No deduplication on ingest — the same JD can be stored multiple times
+- OpenAI embeddings only — a production system might cache embeddings or use a self-hosted model
+
+**What is intentionally not included:**
+- Async embedding generation (ingestion is synchronous)
+- Vector index creation in migration (left for production tuning)
+- Embedding caching (acceptable simplification at this stage)
+
+---
+
 ## Not Included Yet (Intentionally)
 
-- pgvector / embeddings
 - Redis / Celery / distributed workers
 - Authentication / user accounts
 - Docker / CI/CD

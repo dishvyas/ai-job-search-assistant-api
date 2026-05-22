@@ -13,6 +13,11 @@ into the stage's Pydantic schema. Failures at any node propagate as exceptions
 and are caught by the background task's error handler.
 """
 
+# LangGraph is used here as a lightweight sequential orchestrator — not for its
+# conditional branching or parallel execution features, but because it provides a
+# clean typed-state model where each node receives the full prior context and
+# returns only the fields it modifies. This makes the data flow auditable and
+# testable at the node level rather than inside one large function.
 import json
 from typing import TypedDict
 
@@ -42,12 +47,14 @@ class AgenticTailoringState(TypedDict):
     """Mutable state passed between LangGraph nodes."""
 
     request: ApplicationTailorRequest
+    # Intermediate analyses start as None and are populated stage-by-stage.
+    # None values make it explicit that a field hasn't been filled yet vs being empty.
     resume_analysis: ResumeAnalysis | None
     jd_analysis: JobDescriptionAnalysis | None
     fit_gap: FitGapAnalysis | None
     final_output: TailoringLLMOutput | None
     provider_used: str  # reflects the most-recent provider; "fallback-mock" if any stage fell back
-    fallback_used: bool  # True if any stage used the fallback mock
+    fallback_used: bool  # True if any stage used the fallback mock; OR-ed across all stages
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +77,10 @@ def _call_and_parse(prompt: str, model_class: type) -> tuple[object, str, bool]:
         raw = get_llm_provider().generate_text(prompt)
         return _parse(raw, model_class), configured, False
     except (LLMProviderError, LLMOutputParsingError):
-        pass  # fall through to mock
+        pass  # fall through to mock — same fallback logic as the single-step path
 
     raw = MockLLMProvider().generate_text(prompt)
+    # If mock raises here it is a code bug, not a runtime condition — let it propagate.
     return _parse(raw, model_class), "fallback-mock", True
 
 
@@ -81,6 +89,8 @@ def _parse(raw: str, model_class: type) -> object:
 
     Raises LLMOutputParsingError on failure.
     """
+    # Two separate try/except blocks so the error message distinguishes between
+    # "not valid JSON at all" and "valid JSON but wrong shape".
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -99,6 +109,10 @@ def _parse(raw: str, model_class: type) -> object:
 # Graph nodes
 # ---------------------------------------------------------------------------
 
+# Each node function follows the same pattern: build a prompt from the current state,
+# call the LLM (with fallback), parse into the stage's schema, and return only the
+# state keys that this node owns. LangGraph merges the returned dict into the state.
+
 
 def _analyze_resume(state: AgenticTailoringState) -> dict:
     prompt = build_resume_analysis_prompt(state["request"])
@@ -106,6 +120,7 @@ def _analyze_resume(state: AgenticTailoringState) -> dict:
     return {
         "resume_analysis": result,
         "provider_used": provider,
+        # OR with prior stages so fallback_used stays True once any stage has fallen back.
         "fallback_used": state["fallback_used"] or fallback,
     }
 
@@ -121,6 +136,8 @@ def _analyze_jd(state: AgenticTailoringState) -> dict:
 
 
 def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
+    # Receives the outputs of both prior stages — cross-referencing them is the
+    # core value of this stage versus asking one prompt to do everything.
     prompt = build_fit_gap_prompt(state["request"], state["resume_analysis"], state["jd_analysis"])
     result, provider, fallback = _call_and_parse(prompt, FitGapAnalysis)
     return {
@@ -131,6 +148,8 @@ def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
 
 
 def _compose_final(state: AgenticTailoringState) -> dict:
+    # All three prior analyses feed this stage, so the final composition prompt
+    # is richer and more targeted than a single-step prompt over raw text.
     prompt = build_final_tailoring_prompt(
         state["request"],
         state["resume_analysis"],
@@ -151,6 +170,9 @@ def _compose_final(state: AgenticTailoringState) -> dict:
 
 
 def _build_graph() -> object:
+    # Graph is built fresh on each call rather than at module load time so that
+    # test monkeypatching of settings and provider functions takes effect inside
+    # each invocation without needing to reload the module.
     graph: StateGraph = StateGraph(AgenticTailoringState)
 
     graph.add_node("analyze_resume", _analyze_resume)
@@ -158,6 +180,7 @@ def _build_graph() -> object:
     graph.add_node("analyze_fit_gap", _analyze_fit_gap)
     graph.add_node("compose_final", _compose_final)
 
+    # Strictly sequential edges — each stage depends on all prior stages' outputs.
     graph.add_edge(START, "analyze_resume")
     graph.add_edge("analyze_resume", "analyze_jd")
     graph.add_edge("analyze_jd", "analyze_fit_gap")
@@ -189,6 +212,8 @@ def run_agentic_workflow(
         "jd_analysis": None,
         "fit_gap": None,
         "final_output": None,
+        # Set provider_used to the configured value upfront; individual nodes may
+        # overwrite it to "fallback-mock" if their call fails.
         "provider_used": settings.llm_provider.lower(),
         "fallback_used": False,
     }

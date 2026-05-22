@@ -1,3 +1,6 @@
+# API-layer schemas — separate from ORM models so that the DB structure and the
+# HTTP contract can evolve independently. Pydantic validates all input at the
+# boundary; invalid requests are rejected with 422 before reaching any service code.
 from datetime import datetime
 
 from pydantic import BaseModel, field_validator
@@ -6,9 +9,11 @@ from pydantic import BaseModel, field_validator
 class ApplicationTailorRequest(BaseModel):
     master_resume: str
     job_description: str
+    # Optional fields — not all callers have company context or style preferences.
     company_info: str | None = None
     user_preferences: str | None = None
 
+    # Explicit whitespace-only check because Pydantic accepts "   " as a valid str.
     @field_validator("master_resume", "job_description")
     @classmethod
     def must_not_be_empty(cls, v: str) -> str:
@@ -37,6 +42,8 @@ class ApplicationTailoringJobResponse(BaseModel):
     Poll GET /runs/{run_id} to retrieve the generated output once completed.
     """
 
+    # Intentionally minimal — callers only need the ID to poll; they don't
+    # need the full run record until generation is complete.
     run_id: int
     status: str
 
@@ -52,6 +59,8 @@ class ApplicationTailoringRunResponse(BaseModel):
       - failed                → error_message describes the failure
     """
 
+    # from_attributes=True lets Pydantic read values from ORM model attributes
+    # instead of requiring a dict — enables model_validate(orm_instance) directly.
     model_config = {"from_attributes": True}
 
     id: int

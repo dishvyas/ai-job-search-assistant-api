@@ -16,6 +16,7 @@ be used for production billing calculations.
 
 def estimate_input_tokens(prompt: str) -> int:
     """Estimate the number of input tokens in a prompt string."""
+    # Word split is O(n) and dependency-free — appropriate for a rough signal.
     return len(prompt.split())
 
 
