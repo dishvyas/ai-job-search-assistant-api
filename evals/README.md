@@ -68,10 +68,14 @@ python evals/run_eval.py --provider mock --workflow-mode agentic
 python evals/run_eval.py --provider mock --workflow-mode single_step --case backend_engineer_germany
 python evals/run_eval.py --provider mock --compare
 GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode single_step --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --workflow-mode single_step --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --workflow-mode agentic --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --compare --save-report
 ```
 
 Generated reports are written to `evals/reports/` when `--save-report` is used.
 The JSON files in that directory are ignored by Git, while `.gitkeep` keeps the folder tracked.
+`OPENAI_API_KEY` is required when `--provider openai` is used.
 
 ## Report schema overview
 
@@ -123,6 +127,8 @@ Each result includes:
 - Current deterministic evals do not prove whether tailored-artifact retrieval improves quality
 - Real-provider outputs may vary across runs
 - Cost values are approximate
+- Real-provider evals can cost money
+- Tests remain mock/fake-provider only
 
 ## Future improvements
 

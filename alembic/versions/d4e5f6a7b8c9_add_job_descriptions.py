@@ -39,7 +39,9 @@ def upgrade() -> None:
     # Enable pgvector — idempotent, so running this on an existing database with
     # the extension already installed is safe. Required before any vector column
     # can be created.
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     op.create_table(
         "job_descriptions",

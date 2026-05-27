@@ -18,6 +18,9 @@ _INPUT_COST_PER_1K: dict[str, float] = {
     "fallback-mock": 0.0,
     # Gemini Flash: ~$0.075 per 1M input tokens → $0.000075 per 1K
     "gemini": 0.000075,
+    # OpenAI gpt-4.1-mini: ~$0.40 per 1M input tokens → $0.000400 per 1K
+    # Approximate only; not intended for billing-accurate reporting.
+    "openai": 0.000400,
 }
 
 _OUTPUT_COST_PER_1K: dict[str, float] = {
@@ -25,6 +28,9 @@ _OUTPUT_COST_PER_1K: dict[str, float] = {
     "fallback-mock": 0.0,
     # Gemini Flash: ~$0.30 per 1M output tokens → $0.000300 per 1K
     "gemini": 0.000300,
+    # OpenAI gpt-4.1-mini: ~$1.60 per 1M output tokens → $0.001600 per 1K
+    # Approximate only; not intended for billing-accurate reporting.
+    "openai": 0.001600,
 }
 
 
@@ -36,7 +42,7 @@ def estimate_generation_cost(
     """
     Return a rough USD cost estimate for a single generation call.
 
-    provider should be one of: "mock", "gemini", "fallback-mock".
+    provider should be one of: "mock", "gemini", "openai", "fallback-mock".
     Unknown providers default to 0.0 (safe no-op).
     """
     # Normalise to the base provider key (e.g. "gemini-2.5-flash" → "gemini")
@@ -54,5 +60,7 @@ def _resolve_provider_key(provider: str) -> str:
     # Handles variant model names like "gemini-2.5-flash" that aren't in the table directly.
     if provider.startswith("gemini"):
         return "gemini"
+    if provider.startswith("openai"):
+        return "openai"
     # Unknown provider — treat as free to avoid crashing on new providers added in future.
     return "mock"

@@ -69,6 +69,60 @@ def test_provider_gemini_without_api_key_exits_early(capsys, monkeypatch):
     assert "GEMINI_API_KEY is required" in captured.out
 
 
+def test_provider_openai_without_api_key_exits_early(capsys, monkeypatch):
+    monkeypatch.setattr("evals.run_eval.settings.openai_api_key", None)
+
+    exit_code = main(
+        [
+            "--provider",
+            "openai",
+            "--workflow-mode",
+            "single_step",
+            "--case",
+            "backend_engineer_germany",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "OPENAI_API_KEY is required" in captured.out
+
+
+def test_provider_openai_runs_with_fake_client(monkeypatch):
+    class FakeResponses:
+        def create(self, model: str, input: str):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "output_text": (
+                        '{"tailored_summary":"OpenAI summary","tailored_bullets":["b1","b2"],'
+                        '"cover_letter_draft":"letter","application_question_answers":["a1"],'
+                        '"recruiter_message_draft":"msg","fit_gap_analysis":"fit",'
+                        '"interview_talking_points":["p1","p2"]}'
+                    )
+                },
+            )()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr("evals.run_eval.settings.openai_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.llm.openai.OpenAILLMProvider._build_client",
+        lambda self, api_key: FakeClient(),
+    )
+
+    results = run_workflow_mode(
+        "single_step",
+        provider="openai",
+        case_name="backend_engineer_germany",
+    )
+
+    assert len(results) == 1
+    assert results[0]["run_data"]["provider_used"] == "openai"
+
+
 def test_compare_mode_runs_both_workflows(capsys):
     exit_code = main(["--compare", "--case", "backend_engineer_germany"])
     captured = capsys.readouterr()

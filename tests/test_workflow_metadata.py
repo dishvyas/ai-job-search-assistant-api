@@ -89,8 +89,13 @@ def test_gemini_cost_scales_with_token_count():
 
 
 def test_unknown_provider_cost_defaults_to_zero():
-    cost = estimate_generation_cost(500, 200, "openai")
+    cost = estimate_generation_cost(500, 200, "unknown-provider")
     assert cost == 0.0
+
+
+def test_openai_provider_cost_is_positive():
+    cost = estimate_generation_cost(1000, 500, "openai")
+    assert cost > 0.0
 
 
 def test_cost_returns_float():

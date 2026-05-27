@@ -106,6 +106,8 @@ def _validate_provider(provider: str) -> None:
     """Fail fast for real-provider evals with missing required config."""
     if provider == "gemini" and not settings.gemini_api_key:
         raise ValueError("GEMINI_API_KEY is required when running evals with --provider gemini.")
+    if provider == "openai" and not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY is required when running evals with --provider openai.")
 
 
 def _normalize_case_result(
@@ -386,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--provider",
-        choices=("mock", "gemini"),
+        choices=("mock", "gemini", "openai"),
         default="mock",
         help="LLM provider to evaluate against. Defaults to mock.",
     )

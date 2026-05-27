@@ -1,8 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.llm.exceptions import LLMProviderUnavailableError
 from app.llm.factory import get_llm_provider
 from app.llm.mock import MockLLMProvider
+from app.llm.openai import OpenAILLMProvider
 from app.main import app
 from app.prompts.tailoring import build_tailoring_prompt
 from app.schemas.application import ApplicationTailorRequest
@@ -31,10 +33,91 @@ def test_factory_returns_mock_provider_when_configured(monkeypatch):
     assert isinstance(provider, MockLLMProvider)
 
 
-def test_factory_raises_for_unsupported_provider(monkeypatch):
+def test_factory_returns_openai_provider(monkeypatch):
     monkeypatch.setattr("app.llm.factory.settings.llm_provider", "openai")
+    monkeypatch.setattr("app.llm.factory.settings.openai_api_key", "test-key")
+    monkeypatch.setattr("app.llm.factory.settings.openai_model", "gpt-4.1-mini")
+    monkeypatch.setattr(
+        "app.llm.openai.OpenAILLMProvider._build_client",
+        lambda self, api_key: object(),
+    )
+
+    provider = get_llm_provider()
+
+    assert isinstance(provider, OpenAILLMProvider)
+    assert provider.model == "gpt-4.1-mini"
+
+
+def test_factory_raises_for_unsupported_provider(monkeypatch):
+    monkeypatch.setattr("app.llm.factory.settings.llm_provider", "bogus")
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
         get_llm_provider()
+
+
+# ---------------------------------------------------------------------------
+# OpenAI provider tests
+# ---------------------------------------------------------------------------
+
+
+def test_openai_provider_raises_value_error_when_api_key_missing():
+    with pytest.raises(ValueError, match="OPENAI_API_KEY is required"):
+        OpenAILLMProvider(api_key="")
+
+
+def test_openai_provider_generate_text_returns_output_text(monkeypatch):
+    class FakeResponses:
+        def create(self, model: str, input: str):
+            return type("FakeResponse", (), {"output_text": "hello from openai"})()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr(
+        "app.llm.openai.OpenAILLMProvider._build_client",
+        lambda self, api_key: FakeClient(),
+    )
+    provider = OpenAILLMProvider(api_key="test-key")
+
+    assert provider.generate_text("test prompt") == "hello from openai"
+
+
+def test_openai_provider_generate_text_uses_fallback_response_shape(monkeypatch):
+    fake_part = type("FakePart", (), {"text": "fallback text"})()
+    fake_item = type("FakeItem", (), {"content": [fake_part]})()
+    fake_response = type("FakeResponse", (), {"output_text": None, "output": [fake_item]})()
+
+    class FakeResponses:
+        def create(self, model: str, input: str):
+            return fake_response
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr(
+        "app.llm.openai.OpenAILLMProvider._build_client",
+        lambda self, api_key: FakeClient(),
+    )
+    provider = OpenAILLMProvider(api_key="test-key")
+
+    assert provider.generate_text("test prompt") == "fallback text"
+
+
+def test_openai_provider_maps_client_errors(monkeypatch):
+    class FakeResponses:
+        def create(self, model: str, input: str):
+            raise RuntimeError("boom")
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr(
+        "app.llm.openai.OpenAILLMProvider._build_client",
+        lambda self, api_key: FakeClient(),
+    )
+    provider = OpenAILLMProvider(api_key="test-key")
+
+    with pytest.raises(LLMProviderUnavailableError, match="OpenAI request failed"):
+        provider.generate_text("test prompt")
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +135,6 @@ def test_mock_provider_generate_text_returns_string():
 def test_mock_provider_includes_prompt_preview():
     provider = MockLLMProvider()
     result = provider.generate_text("Test prompt content here")
-    # Mock embeds a prompt preview inside the JSON tailored_summary field
     assert "Test prompt content here" in result
 
 
@@ -127,6 +209,5 @@ def test_tailor_response_contains_llm_provider_output(db_session):
         },
     )
     run_id = post_response.json()["run_id"]
-    # Mock provider now returns structured JSON; the summary field carries [MOCK] prefix
     summary = client.get(f"/api/v1/applications/runs/{run_id}").json()["tailored_summary"]
     assert "[MOCK]" in summary

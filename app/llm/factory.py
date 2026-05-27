@@ -10,8 +10,9 @@ def get_llm_provider() -> LLMProvider:
     Return the configured LLM provider based on settings.llm_provider.
 
     Supported values:
-      - "mock"   → MockLLMProvider (default, no API key required)
-      - "gemini" → GeminiLLMProvider (requires GEMINI_API_KEY)
+        - "mock"   → MockLLMProvider (default, no API key required)
+        - "gemini" → GeminiLLMProvider (requires GEMINI_API_KEY)
+        - "openai" → OpenAILLMProvider (requires OPENAI_API_KEY)
     """
     provider = settings.llm_provider.lower()
 
@@ -32,4 +33,16 @@ def get_llm_provider() -> LLMProvider:
             model=settings.gemini_model,
         )
 
-    raise ValueError(f"Unsupported LLM provider: '{provider}'. Supported values: 'mock', 'gemini'.")
+    if provider == "openai":
+        # Lazy import — openai is an optional dependency; importing it here
+        # means tests that don't set LLM_PROVIDER=openai never need it installed.
+        from app.llm.openai import OpenAILLMProvider
+
+        return OpenAILLMProvider(
+            api_key=settings.openai_api_key or "",
+            model=settings.openai_model,
+        )
+
+    raise ValueError(
+        f"Unsupported LLM provider: '{provider}'. Supported values: 'mock', 'gemini', 'openai'."
+    )

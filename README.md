@@ -131,13 +131,20 @@ Introduces a clean abstraction layer between the service logic and the LLM vendo
 - Updated `app/services/application_tailoring.py` — calls the prompt builder and LLM provider; embeds provider output in the response
 - 13 new tests covering factory, mock provider, prompt builder, and endpoint integration
 
+Supported generation providers now include:
+- `mock`
+- `gemini`
+- `openai`
+
 **New environment variables:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `mock` | `mock` or `gemini` |
+| `LLM_PROVIDER` | `mock` | `mock`, `gemini`, or `openai` |
 | `GEMINI_API_KEY` | _(empty)_ | Required only when `LLM_PROVIDER=gemini` |
 | `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model name |
+| `OPENAI_API_KEY` | _(empty)_ | Required when `LLM_PROVIDER=openai`; also reused for embeddings |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI generation model |
 
 **Running in mock mode (default — no setup needed):**
 
@@ -160,6 +167,18 @@ uvicorn app.main:app --reload
 ```
 
 > Gemini is entirely optional. All tests run against the mock provider and do not require an API key.
+
+**Example `.env` for OpenAI generation:**
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-key-here
+OPENAI_MODEL=gpt-4.1-mini
+RAG_ENABLED=false
+```
+
+The same `OPENAI_API_KEY` is also used for embeddings when `RAG_ENABLED=true`.
+RAG still requires PostgreSQL with `pgvector` for meaningful vector similarity search.
 
 ---
 
@@ -955,6 +974,9 @@ python evals/run_eval.py --provider mock --workflow-mode agentic
 GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode single_step --save-report
 GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode agentic --save-report
 GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --compare --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --workflow-mode single_step --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --workflow-mode agentic --save-report
+OPENAI_API_KEY=... python evals/run_eval.py --provider openai --compare --save-report
 ```
 
 **Important notes:**

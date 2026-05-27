@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     llm_provider: str = "mock"
     gemini_api_key: str | None = None  # Only required when llm_provider="gemini"
     gemini_model: str = "gemini-2.5-flash"
+    # OpenAI generation model; separate from embedding_model so generation and
+    # vector search can evolve independently while sharing OPENAI_API_KEY.
+    openai_model: str = "gpt-4.1-mini"
 
     # Database. Defaults to local SQLite — no PostgreSQL needed for local dev or tests.
     database_url: str = "sqlite:///./local.db"
@@ -39,7 +42,9 @@ class Settings(BaseSettings):
     artifact_retrieval_enabled: bool = False
     artifact_retrieval_top_k: int = 3
     artifact_similarity_threshold: float = 0.70
-    # Only required when rag_enabled=True and not using mock mode.
+    # Shared OpenAI API key:
+    # - generation when llm_provider="openai"
+    # - embeddings when rag_enabled=True
     openai_api_key: str | None = None
 
     # extra="ignore" prevents startup failure when .env contains keys not defined above
