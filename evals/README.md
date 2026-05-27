@@ -9,6 +9,7 @@ workflow outputs in this project. It is intentionally offline, deterministic, an
 - `cases/` — compact golden-style evaluation inputs
 - `scoring.py` — deterministic output scoring helpers
 - `run_eval.py` — CLI runner that executes evals against the FastAPI app with `TestClient`
+- `reports/` — optional saved JSON reports for manual eval runs
 
 ## Eval case format
 
@@ -62,11 +63,44 @@ Each check includes:
 ## How to run
 
 ```bash
-python evals/run_eval.py --workflow-mode single_step
-python evals/run_eval.py --workflow-mode agentic
-python evals/run_eval.py --workflow-mode single_step --case backend_engineer_germany
-python evals/run_eval.py --compare
+python evals/run_eval.py --provider mock --workflow-mode single_step
+python evals/run_eval.py --provider mock --workflow-mode agentic
+python evals/run_eval.py --provider mock --workflow-mode single_step --case backend_engineer_germany
+python evals/run_eval.py --provider mock --compare
+GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode single_step --save-report
 ```
+
+Generated reports are written to `evals/reports/` when `--save-report` is used.
+The JSON files in that directory are ignored by Git, while `.gitkeep` keeps the folder tracked.
+
+## Report schema overview
+
+Saved reports include:
+
+- `created_at`
+- `provider`
+- `workflow_mode`
+- `rag_enabled`
+- `artifact_retrieval_enabled`
+- `total_cases`
+- `passed_cases`
+- `failed_cases`
+- `results`
+
+Each result includes:
+
+- `case_name`
+- `workflow_mode`
+- `provider`
+- `passed`
+- `total_score`
+- `max_score`
+- `latency_ms`
+- `estimated_cost_usd`
+- `generation_attempts`
+- `fallback_used`
+- `run_id`
+- `checks`
 
 ## Adding a new case
 
@@ -83,6 +117,8 @@ python evals/run_eval.py --compare
 - Scores are local regression signals, not production truth
 - The harness runs in mock mode, so it is best for workflow regression and plumbing checks
 - Current deterministic evals do not prove whether tailored-artifact retrieval improves quality
+- Real-provider outputs may vary across runs
+- Cost values are approximate
 
 ## Future improvements
 

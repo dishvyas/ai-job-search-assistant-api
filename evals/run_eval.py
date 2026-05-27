@@ -1,5 +1,7 @@
 import argparse
+import json
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - used only when running as a sc
     from scoring import load_eval_case, score_output
 
 CASES_DIR = Path(__file__).parent / "cases"
+REPORTS_DIR = Path(__file__).parent / "reports"
 
 
 def discover_eval_cases(case_name: str | None = None) -> list[dict[str, Any]]:
@@ -99,26 +102,121 @@ def _run_case(client: TestClient, eval_case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_provider(provider: str) -> None:
+    """Fail fast for real-provider evals with missing required config."""
+    if provider == "gemini" and not settings.gemini_api_key:
+        raise ValueError("GEMINI_API_KEY is required when running evals with --provider gemini.")
+
+
+def _normalize_case_result(
+    workflow_mode: str,
+    provider: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Flatten a run result into a report-friendly structure."""
+    run_data = result["run_data"]
+    score = result["score"]
+    return {
+        "case_name": result["case_name"],
+        "workflow_mode": workflow_mode,
+        "provider": provider,
+        "passed": score["passed"],
+        "total_score": score["total_score"],
+        "max_score": score["max_score"],
+        "latency_ms": run_data.get("latency_ms"),
+        "estimated_cost_usd": run_data.get("estimated_cost_usd"),
+        "generation_attempts": run_data.get("generation_attempts"),
+        "fallback_used": run_data.get("fallback_used"),
+        "run_id": result["run_id"],
+        "checks": score["checks"],
+    }
+
+
+def build_report(
+    *,
+    provider: str,
+    workflow_mode: str,
+    rag_enabled: bool,
+    artifact_retrieval_enabled: bool,
+    results: list[dict[str, Any]],
+    comparison_summaries: list[dict[str, Any]] | None = None,
+    total_cases: int | None = None,
+    passed_cases: int | None = None,
+) -> dict[str, Any]:
+    """Create a structured JSON-friendly eval report."""
+    resolved_total_cases = total_cases if total_cases is not None else len(results)
+    resolved_passed_cases = (
+        passed_cases
+        if passed_cases is not None
+        else sum(1 for result in results if result["passed"])
+    )
+    report: dict[str, Any] = {
+        "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "provider": provider,
+        "workflow_mode": workflow_mode,
+        "rag_enabled": rag_enabled,
+        "artifact_retrieval_enabled": artifact_retrieval_enabled,
+        "total_cases": resolved_total_cases,
+        "passed_cases": resolved_passed_cases,
+        "failed_cases": resolved_total_cases - resolved_passed_cases,
+        "results": results,
+    }
+    if comparison_summaries:
+        report["comparison_summaries"] = comparison_summaries
+    return report
+
+
+def save_report(
+    report: dict[str, Any],
+    *,
+    provider: str,
+    workflow_mode: str,
+) -> Path:
+    """Persist a local JSON eval report and return its path."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    filename = f"eval_report_{timestamp}_{provider}_{workflow_mode}.json"
+    path = REPORTS_DIR / filename
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    return path
+
+
 def run_workflow_mode(
     workflow_mode: str,
+    *,
+    provider: str = "mock",
     case_name: str | None = None,
+    rag_enabled: bool = False,
+    artifact_retrieval_enabled: bool = False,
 ) -> list[dict[str, Any]]:
     """Run one or more eval cases against a single workflow mode."""
+    _validate_provider(provider)
     eval_cases = discover_eval_cases(case_name=case_name)
     client, session, engine = _build_test_client()
 
     try:
         with ExitStack() as stack:
-            stack.enter_context(patch.object(settings, "llm_provider", "mock"))
+            stack.enter_context(patch.object(settings, "llm_provider", provider))
             stack.enter_context(patch.object(settings, "workflow_mode", workflow_mode))
-            stack.enter_context(patch.object(settings, "rag_enabled", False))
+            stack.enter_context(patch.object(settings, "rag_enabled", rag_enabled))
+            stack.enter_context(
+                patch.object(
+                    settings,
+                    "artifact_retrieval_enabled",
+                    artifact_retrieval_enabled,
+                )
+            )
             return [_run_case(client, eval_case) for eval_case in eval_cases]
     finally:
         _cleanup_test_client(client, session, engine)
 
 
-def format_run_report(workflow_mode: str, results: list[dict[str, Any]]) -> str:
-    lines = [f"Workflow mode: {workflow_mode}", ""]
+def format_run_report(
+    workflow_mode: str,
+    provider: str,
+    results: list[dict[str, Any]],
+) -> str:
+    lines = [f"Workflow mode: {workflow_mode}", f"Provider: {provider}", ""]
     passed_count = 0
 
     for result in results:
@@ -150,10 +248,28 @@ def format_run_report(workflow_mode: str, results: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def run_compare(case_name: str | None = None) -> list[dict[str, Any]]:
+def run_compare(
+    *,
+    provider: str = "mock",
+    case_name: str | None = None,
+    rag_enabled: bool = False,
+    artifact_retrieval_enabled: bool = False,
+) -> list[dict[str, Any]]:
     """Run each eval case once in each workflow mode."""
-    single_step_results = run_workflow_mode("single_step", case_name=case_name)
-    agentic_results = run_workflow_mode("agentic", case_name=case_name)
+    single_step_results = run_workflow_mode(
+        "single_step",
+        provider=provider,
+        case_name=case_name,
+        rag_enabled=rag_enabled,
+        artifact_retrieval_enabled=artifact_retrieval_enabled,
+    )
+    agentic_results = run_workflow_mode(
+        "agentic",
+        provider=provider,
+        case_name=case_name,
+        rag_enabled=rag_enabled,
+        artifact_retrieval_enabled=artifact_retrieval_enabled,
+    )
 
     by_case = {result["case_name"]: {"single_step": result} for result in single_step_results}
     for result in agentic_results:
@@ -169,8 +285,8 @@ def run_compare(case_name: str | None = None) -> list[dict[str, Any]]:
     ]
 
 
-def format_compare_report(results: list[dict[str, Any]]) -> str:
-    lines = ["Compare mode", ""]
+def format_compare_report(provider: str, results: list[dict[str, Any]]) -> str:
+    lines = ["Compare mode", f"Provider: {provider}", ""]
     passed = True
 
     for result in results:
@@ -198,6 +314,55 @@ def format_compare_report(results: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def build_compare_report_payload(
+    *,
+    provider: str,
+    rag_enabled: bool,
+    artifact_retrieval_enabled: bool,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Flatten compare-mode results and add simple per-case deltas."""
+    flattened_results: list[dict[str, Any]] = []
+    comparison_summaries: list[dict[str, Any]] = []
+
+    for result in results:
+        single_step = _normalize_case_result("single_step", provider, result["single_step"])
+        agentic = _normalize_case_result("agentic", provider, result["agentic"])
+        flattened_results.extend([single_step, agentic])
+        comparison_summaries.append(
+            {
+                "case_name": result["case_name"],
+                "score_delta": agentic["total_score"] - single_step["total_score"],
+                "latency_delta_ms": (
+                    (agentic["latency_ms"] or 0) - (single_step["latency_ms"] or 0)
+                ),
+                "cost_delta_usd": (
+                    (agentic["estimated_cost_usd"] or 0.0)
+                    - (single_step["estimated_cost_usd"] or 0.0)
+                ),
+                "attempts_delta": (
+                    (agentic["generation_attempts"] or 0)
+                    - (single_step["generation_attempts"] or 0)
+                ),
+            }
+        )
+
+    return build_report(
+        provider=provider,
+        workflow_mode="compare",
+        rag_enabled=rag_enabled,
+        artifact_retrieval_enabled=artifact_retrieval_enabled,
+        results=flattened_results,
+        comparison_summaries=comparison_summaries,
+        total_cases=len(results),
+        passed_cases=sum(
+            1
+            for result in results
+            if result["single_step"]["score"]["passed"] and result["agentic"]["score"]["passed"]
+        ),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run local workflow eval cases.")
     mode_group = parser.add_mutually_exclusive_group(required=True)
@@ -215,23 +380,82 @@ def main(argv: list[str] | None = None) -> int:
         "--case",
         help="Optional case name without the .json extension.",
     )
+    parser.add_argument(
+        "--provider",
+        choices=("mock", "gemini"),
+        default="mock",
+        help="LLM provider to evaluate against. Defaults to mock.",
+    )
+    parser.add_argument(
+        "--save-report",
+        action="store_true",
+        help="Save a structured JSON report under evals/reports/.",
+    )
+    parser.add_argument(
+        "--rag-enabled",
+        action="store_true",
+        help="Enable job-description RAG during the eval run.",
+    )
+    parser.add_argument(
+        "--artifact-retrieval-enabled",
+        action="store_true",
+        help="Enable tailored-artifact retrieval during the eval run.",
+    )
     args = parser.parse_args(argv)
 
-    if args.compare:
-        results = run_compare(case_name=args.case)
-        print(format_compare_report(results))
-        return (
-            0
-            if all(
-                result["single_step"]["score"]["passed"] and result["agentic"]["score"]["passed"]
-                for result in results
+    try:
+        if args.compare:
+            results = run_compare(
+                provider=args.provider,
+                case_name=args.case,
+                rag_enabled=args.rag_enabled,
+                artifact_retrieval_enabled=args.artifact_retrieval_enabled,
             )
-            else 1
-        )
+            print(format_compare_report(args.provider, results))
+            if args.save_report:
+                report = build_compare_report_payload(
+                    provider=args.provider,
+                    rag_enabled=args.rag_enabled,
+                    artifact_retrieval_enabled=args.artifact_retrieval_enabled,
+                    results=results,
+                )
+                path = save_report(report, provider=args.provider, workflow_mode="compare")
+                print(f"\nSaved report: {path}")
+            return (
+                0
+                if all(
+                    result["single_step"]["score"]["passed"]
+                    and result["agentic"]["score"]["passed"]
+                    for result in results
+                )
+                else 1
+            )
 
-    results = run_workflow_mode(args.workflow_mode, case_name=args.case)
-    print(format_run_report(args.workflow_mode, results))
-    return 0 if all(result["score"]["passed"] for result in results) else 1
+        results = run_workflow_mode(
+            args.workflow_mode,
+            provider=args.provider,
+            case_name=args.case,
+            rag_enabled=args.rag_enabled,
+            artifact_retrieval_enabled=args.artifact_retrieval_enabled,
+        )
+        print(format_run_report(args.workflow_mode, args.provider, results))
+        if args.save_report:
+            report = build_report(
+                provider=args.provider,
+                workflow_mode=args.workflow_mode,
+                rag_enabled=args.rag_enabled,
+                artifact_retrieval_enabled=args.artifact_retrieval_enabled,
+                results=[
+                    _normalize_case_result(args.workflow_mode, args.provider, result)
+                    for result in results
+                ],
+            )
+            path = save_report(report, provider=args.provider, workflow_mode=args.workflow_mode)
+            print(f"\nSaved report: {path}")
+        return 0 if all(result["score"]["passed"] for result in results) else 1
+    except ValueError as exc:
+        print(str(exc))
+        return 1
 
 
 if __name__ == "__main__":

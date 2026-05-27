@@ -934,3 +934,31 @@ Extends the RAG pipeline so the app can optionally retrieve prior generated tail
 - artifact indexing is best-effort after a completed run is saved
 - if artifact embedding generation fails, the run stays completed
 - when `RAG_ENABLED=false`, existing behavior remains unchanged
+
+---
+
+## Milestone 14 — Real-Provider Eval Reports
+
+Extends the local eval harness so it can optionally run against a real configured provider and save structured JSON reports locally for later review.
+
+**What this adds:**
+- `--provider mock|gemini` on `evals/run_eval.py`
+- `--save-report` to persist JSON reports under `evals/reports/`
+- optional eval-time flags for `--rag-enabled` and `--artifact-retrieval-enabled`
+- local report files that capture score, latency, cost, attempts, provider, fallback, and workflow mode
+
+**Example commands:**
+
+```bash
+python evals/run_eval.py --provider mock --workflow-mode single_step
+python evals/run_eval.py --provider mock --workflow-mode agentic
+GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode single_step --save-report
+GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --workflow-mode agentic --save-report
+GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --compare --save-report
+```
+
+**Important notes:**
+- real-provider evals are manual only
+- real-provider evals may cost money
+- the runner fails fast if `--provider gemini` is used without `GEMINI_API_KEY`
+- automated tests remain mock-only and do not call real Gemini or OpenAI

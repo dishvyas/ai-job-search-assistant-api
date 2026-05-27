@@ -52,3 +52,6 @@ local.db
 
 # Personal interview prep notes — never commit
 INTERVIEW_NOTES.md
+
+# Generated eval reports
+evals/reports/*.json
