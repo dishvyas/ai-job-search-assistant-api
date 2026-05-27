@@ -1,0 +1,20 @@
+{
+  "name": "full_stack_ai_startup",
+  "description": "Fictional full-stack AI startup engineer application with backend-heavy experience.",
+  "master_resume": "Lena Brooks is a fictional engineer with 5 years of experience shipping customer-facing web features and backend APIs for AI-assisted products. Her background includes React, TypeScript, Python services, FastAPI, analytics instrumentation, and iterative product delivery in small startup teams.",
+  "job_description": "Early-stage AI startup hiring a Full-Stack Engineer to ship product features quickly, support Python backend services, collaborate on experimentation, and improve customer-facing workflows. Experience across frontend and backend delivery, startup ownership, and fast iteration is important.",
+  "company_info": "Small AI product startup focused on rapid iteration and customer feedback loops.",
+  "user_preferences": "Balance product speed with backend quality and cross-functional ownership.",
+  "expected_keywords": ["experience", "impact", "fit", "role"],
+  "must_not_include": ["bank account", "driver license", "private phone number"],
+  "expected_sections": [
+    "tailored_summary",
+    "tailored_bullets",
+    "cover_letter_draft",
+    "application_question_answers",
+    "recruiter_message_draft",
+    "fit_gap_analysis",
+    "interview_talking_points"
+  ],
+  "notes": "Compact startup-style case for regression checking across workflows."
+}

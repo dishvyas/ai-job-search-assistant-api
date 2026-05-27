@@ -1,0 +1,20 @@
+{
+  "name": "backend_engineer_germany",
+  "description": "Fictional backend engineer application for a Germany-based platform team.",
+  "master_resume": "Mira Hoffmann is a fictional backend engineer with 6 years of experience building Python services, FastAPI APIs, background jobs, PostgreSQL data models, and CI-tested internal platforms. She has led reliability improvements, reduced incident volume, and partnered with product and frontend teams across distributed environments in Europe.",
+  "job_description": "Berlin-based SaaS company hiring a Backend Engineer to build scalable APIs, improve service reliability, support asynchronous workflows, and collaborate with product, data, and frontend teams. Experience with Python, FastAPI, PostgreSQL, and production systems is preferred.",
+  "company_info": "Remote-friendly B2B workflow platform expanding its engineering team in Germany.",
+  "user_preferences": "Emphasize platform reliability, collaborative delivery, and measurable engineering impact.",
+  "expected_keywords": ["experience", "impact", "fit", "role"],
+  "must_not_include": ["SSN", "passport number", "123 Main Street"],
+  "expected_sections": [
+    "tailored_summary",
+    "tailored_bullets",
+    "cover_letter_draft",
+    "application_question_answers",
+    "recruiter_message_draft",
+    "fit_gap_analysis",
+    "interview_talking_points"
+  ],
+  "notes": "Should score cleanly in mock mode for both single_step and agentic workflows."
+}

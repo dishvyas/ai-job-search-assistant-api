@@ -1,0 +1,20 @@
+{
+  "name": "ai_platform_engineer",
+  "description": "Fictional AI platform engineer application focused on internal tooling and workflow reliability.",
+  "master_resume": "Noah Patel is a fictional software engineer with 7 years of experience building internal AI tooling, Python APIs, workflow orchestration services, structured outputs, evaluation utilities, and observability-friendly backend systems. He has shipped prompt pipelines, data services, and test harnesses for product teams.",
+  "job_description": "AI Platform Engineer needed to support internal LLM workflows, improve reliability of backend services, add evaluation tooling, and collaborate closely with product and infrastructure engineers. Python backend experience, workflow orchestration, and strong testing habits are required.",
+  "company_info": "Series B applied AI company building workflow tooling for enterprise teams.",
+  "user_preferences": "Highlight evaluation-minded engineering and platform quality work.",
+  "expected_keywords": ["experience", "impact", "fit", "role"],
+  "must_not_include": ["credit card", "social security", "home address"],
+  "expected_sections": [
+    "tailored_summary",
+    "tailored_bullets",
+    "cover_letter_draft",
+    "application_question_answers",
+    "recruiter_message_draft",
+    "fit_gap_analysis",
+    "interview_talking_points"
+  ],
+  "notes": "Useful for comparing workflow quality and generation_attempts between single_step and agentic modes."
+}

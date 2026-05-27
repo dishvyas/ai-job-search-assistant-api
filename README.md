@@ -849,3 +849,46 @@ GET /api/v1/applications/runs/{run_id}/trace
 - Tracing is agentic-only in this milestone; `single_step` runs return an empty trace list
 - Trace persistence is best-effort; if a trace insert fails, the workflow still completes
 - The existing single-step workflow, RAG behavior, mock mode, fallback behavior, and LangGraph structure are preserved
+
+---
+
+## Milestone 12 — Workflow Evaluation Harness
+
+Adds a lightweight local evaluation harness for comparing workflow quality and reliability across `single_step` and `agentic` modes without any external eval service.
+
+**Why evals matter:**
+- provide golden regression checks for AI workflow behavior
+- catch broken output structure before it reaches runtime users
+- compare quality, cost, latency, and attempt-count tradeoffs between workflows
+- keep workflow changes interview-friendly and explainable with deterministic scoring
+
+**How to run evals:**
+
+```bash
+python evals/run_eval.py --workflow-mode single_step
+python evals/run_eval.py --workflow-mode agentic
+python evals/run_eval.py --compare
+```
+
+You can also scope to a single case:
+
+```bash
+python evals/run_eval.py --workflow-mode single_step --case backend_engineer_germany
+```
+
+**What scoring checks exist:**
+- required output sections present
+- `tailored_bullets` non-empty
+- `interview_talking_points` non-empty
+- `cover_letter_draft` non-empty
+- `fit_gap_analysis` non-empty
+- keyword coverage from case expectations
+- forbidden text detection from `must_not_include`
+- simple length sanity checks
+- workflow metadata presence when available
+
+**What is intentionally not included yet:**
+- LLM-as-judge
+- semantic scoring
+- external eval platforms
+- real production benchmark datasets
