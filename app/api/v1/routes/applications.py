@@ -4,10 +4,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.repositories.agent_trace import get_agent_trace_steps
 from app.repositories.application_runs import (
     create_pending_run,
     get_application_tailoring_run,
 )
+from app.schemas.agent_trace import AgentTraceResponse
 from app.schemas.application import (
     ApplicationTailoringJobResponse,
     ApplicationTailoringRunResponse,
@@ -55,3 +57,17 @@ def get_run(
     # model_validate with from_attributes=True maps the ORM instance to the
     # response schema without needing an explicit .dict() or field-by-field copy.
     return ApplicationTailoringRunResponse.model_validate(run)
+
+
+@router.get("/runs/{run_id}/trace", response_model=AgentTraceResponse)
+def get_run_trace(
+    run_id: int,
+    db: Session = Depends(get_db),
+) -> AgentTraceResponse:
+    """Return persisted agentic trace steps for a run."""
+    run = get_application_tailoring_run(db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    steps = get_agent_trace_steps(db, run_id)
+    return AgentTraceResponse(run_id=run_id, steps=steps)

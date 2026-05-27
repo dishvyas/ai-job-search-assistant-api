@@ -6,6 +6,8 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+import app.models.agent_trace  # noqa: F401 — registers AgentTraceStep with Base.metadata
+
 # noqa: F401 — this import has no runtime effect here, but it registers
 # ApplicationTailoringRun with Base.metadata so Alembic's autogenerate can see it.
 import app.models.application  # noqa: F401 — registers model with Base.metadata

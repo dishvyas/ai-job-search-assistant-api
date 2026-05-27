@@ -93,7 +93,11 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             # Generation attempt accounting: 4 analysis/composition stages + optional
             # revision (absorbed into approximation); doubled if any stage fell back.
             # This intentionally approximates rather than tracking every possible path.
-            llm_output, provider_used, used_fallback = run_agentic_workflow(request, db=db)
+            llm_output, provider_used, used_fallback = run_agentic_workflow(
+                request,
+                db=db,
+                run_id=run.id,
+            )
             generation_attempts = 4 + (4 if used_fallback else 0)
 
         completed_at = datetime.now(UTC)

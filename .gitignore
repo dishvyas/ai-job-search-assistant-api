@@ -49,3 +49,6 @@ local.db
 *.db
 *.sqlite
 *.sqlite3
+
+# Personal interview prep notes — never commit
+INTERVIEW_NOTES.md

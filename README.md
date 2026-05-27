@@ -770,3 +770,82 @@ The graph structure, transition logic, and decision rules are all hardcoded in P
 - Authentication / user accounts
 - Docker / CI/CD
 - External observability platforms (Datadog, OpenTelemetry)
+
+---
+
+## Milestone 11 — Agent Workflow Traceability
+
+Adds lightweight per-stage tracing for the `agentic` workflow so a completed run can be inspected after the fact without exposing raw prompts or PII-heavy source text.
+
+**Why traceability matters:**
+- Makes agent behavior observable instead of black-box
+- Helps debug intermediate reasoning stages and fallback paths
+- Gives production-style per-stage metadata without rewriting the existing graph
+- Improves explainability for UIs, QA, and workflow audits
+
+**What was added:**
+- `agent_trace_steps` table for persisted stage-level workflow traces
+- `AgentTraceStep` SQLAlchemy model and repository helpers
+- `GET /api/v1/applications/runs/{run_id}/trace`
+- Best-effort tracing inside agentic nodes:
+  - `retrieve_context`
+  - `analyze_resume`
+  - `analyze_jd`
+  - `analyze_fit_gap`
+  - `decide_route`
+  - `compose_final`
+  - `review_output`
+  - `revise_output` when revision runs
+
+**Trace data includes:**
+- `step_name`
+- `status`
+- short `input_summary`
+- short `output_summary`
+- `provider_used`
+- `fallback_used`
+- `latency_ms`
+- `error_message` when a step fails
+- `created_at`
+
+**Trace data intentionally does not include:**
+- raw prompts
+- full resume text
+- full job description text
+- full retrieved context payloads
+
+This keeps the trace useful for debugging while avoiding direct exposure of sensitive or high-volume inputs.
+
+**New endpoint:**
+
+```bash
+GET /api/v1/applications/runs/{run_id}/trace
+```
+
+**Response shape:**
+
+```json
+{
+  "run_id": 123,
+  "steps": [
+    {
+      "id": 1,
+      "run_id": 123,
+      "step_name": "retrieve_context",
+      "status": "completed",
+      "input_summary": "RAG enabled=false; db available=true.",
+      "output_summary": "Retrieved 0 context snippets.",
+      "provider_used": "mock",
+      "fallback_used": false,
+      "latency_ms": 0,
+      "error_message": null,
+      "created_at": "2026-05-27T10:00:00Z"
+    }
+  ]
+}
+```
+
+**Important implementation choices:**
+- Tracing is agentic-only in this milestone; `single_step` runs return an empty trace list
+- Trace persistence is best-effort; if a trace insert fails, the workflow still completes
+- The existing single-step workflow, RAG behavior, mock mode, fallback behavior, and LangGraph structure are preserved

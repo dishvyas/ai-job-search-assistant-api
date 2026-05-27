@@ -22,6 +22,7 @@ decision-making inside an agent graph without requiring extra LLM calls.
 # context and returns only the fields it mutates. This is cleaner than passing
 # everything as function arguments and easier to trace/debug than a single large function.
 import json
+import time
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -38,6 +39,7 @@ from app.prompts.agentic_tailoring import (
     build_resume_analysis_prompt,
     build_revision_prompt,
 )
+from app.repositories.agent_trace import create_agent_trace_step
 from app.schemas.agent import FitGapAnalysis, JobDescriptionAnalysis, ResumeAnalysis
 from app.schemas.application import ApplicationTailorRequest
 from app.schemas.llm_output import TailoringLLMOutput
@@ -55,6 +57,7 @@ class AgenticTailoringState(TypedDict):
     # the RAG retrieval tool without needing to import the session from outside the graph.
     # TypedDict uses Any here because Session is not serialisable; we never persist state.
     db: Any
+    run_id: int | None
 
     # M8 intermediate analyses — populated stage-by-stage; None until that stage runs.
     resume_analysis: ResumeAnalysis | None
@@ -127,6 +130,93 @@ def _parse(raw: str, model_class: type) -> object:
         ) from e
 
 
+def _truncate_summary(text: str, limit: int = 240) -> str:
+    """Keep trace summaries compact and human-readable."""
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+def _save_trace_step(
+    state: AgenticTailoringState,
+    *,
+    step_name: str,
+    status: str,
+    input_summary: str | None,
+    output_summary: str | None,
+    provider_used: str | None,
+    fallback_used: bool,
+    latency_ms: int | None,
+    error_message: str | None = None,
+) -> None:
+    """Best-effort trace persistence; never fail the workflow over observability."""
+    db = state.get("db")
+    run_id = state.get("run_id")
+    if db is None or run_id is None:
+        return
+
+    try:
+        create_agent_trace_step(
+            db=db,
+            run_id=run_id,
+            step_name=step_name,
+            status=status,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            provider_used=provider_used,
+            fallback_used=fallback_used,
+            latency_ms=latency_ms,
+            error_message=error_message,
+        )
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
+def _run_traced_step(
+    state: AgenticTailoringState,
+    *,
+    step_name: str,
+    input_summary: str,
+    run_step,
+    build_output_summary,
+) -> dict:
+    """Execute a workflow node and persist a best-effort trace record."""
+    started = time.perf_counter()
+
+    try:
+        updates = run_step(state)
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        _save_trace_step(
+            state,
+            step_name=step_name,
+            status="failed",
+            input_summary=_truncate_summary(input_summary),
+            output_summary=None,
+            provider_used=state.get("provider_used"),
+            fallback_used=state.get("fallback_used", False),
+            latency_ms=latency_ms,
+            error_message=_truncate_summary(str(exc)),
+        )
+        raise
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    provider_used = updates.get("provider_used", state.get("provider_used"))
+    fallback_used = updates.get("fallback_used", state.get("fallback_used", False))
+    _save_trace_step(
+        state,
+        step_name=step_name,
+        status="completed",
+        input_summary=_truncate_summary(input_summary),
+        output_summary=_truncate_summary(build_output_summary(state, updates)),
+        provider_used=provider_used,
+        fallback_used=fallback_used,
+        latency_ms=latency_ms,
+    )
+    return updates
+
+
 # ---------------------------------------------------------------------------
 # Graph nodes
 # ---------------------------------------------------------------------------
@@ -144,68 +234,113 @@ def _retrieve_context(state: AgenticTailoringState) -> dict:
     performing any reasoning. If retrieval is disabled, unavailable, or fails,
     the workflow continues gracefully with an empty context list.
     """
+
     # Guard: skip if RAG is disabled or no DB session was provided.
     # This preserves identical behaviour for all callers that don't pass a db session,
     # including all pre-M10 tests.
-    if not settings.rag_enabled or state.get("db") is None:
-        return {"retrieved_context": []}
+    def _run(state: AgenticTailoringState) -> dict:
+        if not settings.rag_enabled or state.get("db") is None:
+            return {"retrieved_context": []}
 
-    try:
-        # Lazy import keeps pgvector optional — it only needs to be installed when RAG
-        # is actually enabled. Module-level import would force the dependency for everyone.
-        from app.rag.retrieve import retrieve_relevant_jobs
+        try:
+            # Lazy import keeps pgvector optional — it only needs to be installed when RAG
+            # is actually enabled. Module-level import would force the dependency for everyone.
+            from app.rag.retrieve import retrieve_relevant_jobs
 
-        results = retrieve_relevant_jobs(state["db"], query=state["request"].job_description)
-        # Store raw text snippets (not ORM objects) so state stays serialisable and lightweight.
-        # Truncate each snippet to 300 chars — enough semantic signal without blowing token budget.
-        snippets = [(jd.raw_text or "")[:300].strip() for jd, _ in results]
-        return {"retrieved_context": snippets}
-    except Exception:  # noqa: BLE001
-        # Retrieval failure must not abort the whole workflow — context is optional enrichment.
-        # Silently degrade to empty context rather than propagating the exception.
-        return {"retrieved_context": []}
+            results = retrieve_relevant_jobs(state["db"], query=state["request"].job_description)
+            snippets = [(jd.raw_text or "")[:300].strip() for jd, _ in results]
+            return {"retrieved_context": snippets}
+        except Exception:  # noqa: BLE001
+            return {"retrieved_context": []}
+
+    return _run_traced_step(
+        state,
+        step_name="retrieve_context",
+        input_summary=(
+            f"RAG enabled={settings.rag_enabled}; db available={state.get('db') is not None}."
+        ),
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            f"Retrieved {len(updates['retrieved_context'])} context snippets."
+        ),
+    )
 
 
 def _analyze_resume(state: AgenticTailoringState) -> dict:
-    # Resume analysis doesn't use retrieved context — the LLM should extract facts
-    # about the candidate from the resume alone, unbiased by external context.
-    prompt = build_resume_analysis_prompt(state["request"])
-    result, provider, fallback = _call_and_parse(prompt, ResumeAnalysis)
-    return {
-        "resume_analysis": result,
-        "provider_used": provider,
-        # OR with prior stages so fallback_used stays True once any stage has fallen back.
-        "fallback_used": state["fallback_used"] or fallback,
-    }
+    def _run(state: AgenticTailoringState) -> dict:
+        prompt = build_resume_analysis_prompt(state["request"])
+        result, provider, fallback = _call_and_parse(prompt, ResumeAnalysis)
+        return {
+            "resume_analysis": result,
+            "provider_used": provider,
+            "fallback_used": state["fallback_used"] or fallback,
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="analyze_resume",
+        input_summary="Extracting structured resume skills, experience, and strengths.",
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            "Extracted "
+            f"{len(updates['resume_analysis'].key_skills)} skills, "
+            f"{len(updates['resume_analysis'].relevant_experience)} experience items, and "
+            f"{len(updates['resume_analysis'].strengths)} strengths."
+        ),
+    )
 
 
 def _analyze_jd(state: AgenticTailoringState) -> dict:
-    # JD analysis also doesn't use retrieved context — same reasoning as resume analysis.
-    prompt = build_jd_analysis_prompt(state["request"])
-    result, provider, fallback = _call_and_parse(prompt, JobDescriptionAnalysis)
-    return {
-        "jd_analysis": result,
-        "provider_used": provider,
-        "fallback_used": state["fallback_used"] or fallback,
-    }
+    def _run(state: AgenticTailoringState) -> dict:
+        prompt = build_jd_analysis_prompt(state["request"])
+        result, provider, fallback = _call_and_parse(prompt, JobDescriptionAnalysis)
+        return {
+            "jd_analysis": result,
+            "provider_used": provider,
+            "fallback_used": state["fallback_used"] or fallback,
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="analyze_jd",
+        input_summary="Extracting structured role requirements and responsibilities.",
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            "Extracted "
+            f"{len(updates['jd_analysis'].required_skills)} required skills and "
+            f"{len(updates['jd_analysis'].responsibilities)} responsibilities."
+        ),
+    )
 
 
 def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
-    # Receives outputs of both prior stages + retrieved context. The retrieved context
-    # helps calibrate gap severity — e.g., if similar real roles also require Kubernetes,
-    # that gap is more material than if the retrieved roles don't mention it.
-    prompt = build_fit_gap_prompt(
-        state["request"],
-        state["resume_analysis"],
-        state["jd_analysis"],
-        retrieved_context=state["retrieved_context"] or None,
+    def _run(state: AgenticTailoringState) -> dict:
+        prompt = build_fit_gap_prompt(
+            state["request"],
+            state["resume_analysis"],
+            state["jd_analysis"],
+            retrieved_context=state["retrieved_context"] or None,
+        )
+        result, provider, fallback = _call_and_parse(prompt, FitGapAnalysis)
+        return {
+            "fit_gap": result,
+            "provider_used": provider,
+            "fallback_used": state["fallback_used"] or fallback,
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="analyze_fit_gap",
+        input_summary=(
+            f"Comparing resume analysis to JD analysis with "
+            f"{len(state['retrieved_context'])} retrieved context snippets."
+        ),
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            f"Identified {len(updates['fit_gap'].fit_points)} fit points and "
+            f"{len(updates['fit_gap'].gap_points)} gap points."
+        ),
     )
-    result, provider, fallback = _call_and_parse(prompt, FitGapAnalysis)
-    return {
-        "fit_gap": result,
-        "provider_used": provider,
-        "fallback_used": state["fallback_used"] or fallback,
-    }
 
 
 def _decide_route(state: AgenticTailoringState) -> dict:
@@ -227,34 +362,60 @@ def _decide_route(state: AgenticTailoringState) -> dict:
     retrieved_context = state["retrieved_context"]
     request = state["request"]
 
-    if not retrieved_context and not request.company_info:
-        # No external context of any kind — flag it but continue with what we have.
-        route = "needs_more_context"
-    elif fit_gap and len(fit_gap.gap_points) > len(fit_gap.fit_points):
-        # More gaps than fit points signals a weak match; proceed but warn the caller.
-        route = "low_fit_warning"
-    else:
-        route = "proceed_to_tailoring"
+    def _run(_state: AgenticTailoringState) -> dict:
+        if not retrieved_context and not request.company_info:
+            route = "needs_more_context"
+        elif fit_gap and len(fit_gap.gap_points) > len(fit_gap.fit_points):
+            route = "low_fit_warning"
+        else:
+            route = "proceed_to_tailoring"
 
-    return {"route_decision": route}
+        return {"route_decision": route}
+
+    return _run_traced_step(
+        state,
+        step_name="decide_route",
+        input_summary=(
+            f"Company info present={bool(request.company_info)}; "
+            f"retrieved snippets={len(retrieved_context)}."
+        ),
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            f"Selected route: {updates['route_decision']}."
+        ),
+    )
 
 
 def _compose_final(state: AgenticTailoringState) -> dict:
-    # All three prior analyses + retrieved context feed the final composition, making
-    # the prompt richer and more targeted than a single-step call over raw text.
-    prompt = build_final_tailoring_prompt(
-        state["request"],
-        state["resume_analysis"],
-        state["jd_analysis"],
-        state["fit_gap"],
-        retrieved_context=state["retrieved_context"] or None,
+    def _run(state: AgenticTailoringState) -> dict:
+        prompt = build_final_tailoring_prompt(
+            state["request"],
+            state["resume_analysis"],
+            state["jd_analysis"],
+            state["fit_gap"],
+            retrieved_context=state["retrieved_context"] or None,
+        )
+        result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
+        return {
+            "final_output": result,
+            "provider_used": provider,
+            "fallback_used": state["fallback_used"] or fallback,
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="compose_final",
+        input_summary=(
+            f"Composing final materials after route {state['route_decision']} "
+            f"with {len(state['retrieved_context'])} retrieved snippets."
+        ),
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            "Generated final output with "
+            f"{len(updates['final_output'].tailored_bullets)} bullets and "
+            f"{len(updates['final_output'].interview_talking_points)} interview points."
+        ),
     )
-    result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
-    return {
-        "final_output": result,
-        "provider_used": provider,
-        "fallback_used": state["fallback_used"] or fallback,
-    }
 
 
 def _review_output(state: AgenticTailoringState) -> dict:
@@ -277,14 +438,25 @@ def _review_output(state: AgenticTailoringState) -> dict:
     if not output or not output.interview_talking_points:
         issues.append("interview_talking_points is empty")
 
-    if issues:
-        notes = "Output incomplete — " + "; ".join(issues) + "."
-        return {"revision_needed": True, "review_notes": notes}
+    def _run(_state: AgenticTailoringState) -> dict:
+        if issues:
+            notes = "Output incomplete — " + "; ".join(issues) + "."
+            return {"revision_needed": True, "review_notes": notes}
 
-    return {
-        "revision_needed": False,
-        "review_notes": "Review passed: all required sections are present.",
-    }
+        return {
+            "revision_needed": False,
+            "review_notes": "Review passed: all required sections are present.",
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="review_output",
+        input_summary="Running deterministic completeness checks on final output sections.",
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            f"Revision needed={updates['revision_needed']}. {updates['review_notes']}"
+        ),
+    )
 
 
 def _revise_output(state: AgenticTailoringState) -> dict:
@@ -296,17 +468,33 @@ def _revise_output(state: AgenticTailoringState) -> dict:
     After this node, the graph always proceeds to END — no second review is performed,
     which prevents any possibility of a correction loop.
     """
-    current_json = json.dumps(state["final_output"].model_dump()) if state["final_output"] else "{}"
-    prompt = build_revision_prompt(
-        current_output_json=current_json,
-        review_notes=state["review_notes"] or "",
+
+    def _run(state: AgenticTailoringState) -> dict:
+        current_json = (
+            json.dumps(state["final_output"].model_dump()) if state["final_output"] else "{}"
+        )
+        prompt = build_revision_prompt(
+            current_output_json=current_json,
+            review_notes=state["review_notes"] or "",
+        )
+        result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
+        return {
+            "final_output": result,
+            "provider_used": provider,
+            "fallback_used": state["fallback_used"] or fallback,
+        }
+
+    return _run_traced_step(
+        state,
+        step_name="revise_output",
+        input_summary="Revising the final output after deterministic review flagged issues.",
+        run_step=_run,
+        build_output_summary=lambda _state, updates: (
+            "Revised output with "
+            f"{len(updates['final_output'].tailored_bullets)} bullets and "
+            f"{len(updates['final_output'].interview_talking_points)} interview points."
+        ),
     )
-    result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
-    return {
-        "final_output": result,
-        "provider_used": provider,
-        "fallback_used": state["fallback_used"] or fallback,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +555,7 @@ def _build_graph() -> object:
 def run_agentic_workflow(
     request: ApplicationTailorRequest,
     db: Any = None,
+    run_id: int | None = None,
 ) -> tuple[TailoringLLMOutput, str, bool]:
     """
     Execute the tool-using agentic workflow and return the final tailoring output.
@@ -387,6 +576,7 @@ def run_agentic_workflow(
     initial_state: AgenticTailoringState = {
         "request": request,
         "db": db,
+        "run_id": run_id,
         "resume_analysis": None,
         "jd_analysis": None,
         "fit_gap": None,
