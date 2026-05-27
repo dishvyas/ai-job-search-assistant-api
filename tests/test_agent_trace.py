@@ -112,7 +112,7 @@ def test_revise_output_trace_appears_only_when_revision_runs(db_session, monkeyp
     run = create_pending_run(db_session, request)
 
     monkeypatch.setattr("app.services.agentic_tailoring._compose_final", patched_compose_final)
-    output, _, _ = run_agentic_workflow(request, db=db_session, run_id=run.id)
+    output, _, _, _ = run_agentic_workflow(request, db=db_session, run_id=run.id)
 
     assert "[MOCK-REVISED]" in output.tailored_summary
 
@@ -136,7 +136,7 @@ def test_trace_write_failure_does_not_fail_agentic_workflow(db_session, monkeypa
 
     monkeypatch.setattr("app.services.agentic_tailoring.create_agent_trace_step", fail_trace_write)
 
-    output, provider_used, fallback_used = run_agentic_workflow(
+    output, provider_used, fallback_used, _ = run_agentic_workflow(
         request,
         db=db_session,
         run_id=run.id,

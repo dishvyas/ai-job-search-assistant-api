@@ -962,3 +962,34 @@ GEMINI_API_KEY=... python evals/run_eval.py --provider gemini --compare --save-r
 - real-provider evals may cost money
 - the runner fails fast if `--provider gemini` is used without `GEMINI_API_KEY`
 - automated tests remain mock-only and do not call real Gemini or OpenAI
+
+---
+
+## Milestone 15 — Agent Decision Metadata
+
+Adds a compact, safe agent decision summary to `GET /api/v1/applications/runs/{run_id}` for agentic runs.
+
+**What this exposes:**
+- `route_decision`
+- `review_notes`
+- `revision_needed`
+- `retrieved_context_count`
+- `artifact_context_count`
+
+**Why this exists:**
+- the main run endpoint can now show a concise explainability summary for product/UI use
+- the trace endpoint still exists for stage-by-stage debug detail
+- compact decision metadata is easier to surface than full internal traces
+
+**Run summary vs trace endpoint:**
+- `GET /runs/{run_id}` now returns a compact workflow summary
+- `GET /runs/{run_id}/trace` still returns per-stage debug detail
+
+**Why these fields are safe to expose:**
+- they are summaries and counters, not raw retrieved snippets
+- they do not expose prompts
+- they do not expose full resumes or full job descriptions
+- they do not expose raw artifact examples
+
+**Single-step behavior:**
+- single-step runs return `null` for these agent-specific fields

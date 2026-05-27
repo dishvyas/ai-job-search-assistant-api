@@ -78,6 +78,11 @@ class ApplicationTailoringRunResponse(BaseModel):
 
     provider_used: str | None = None
     fallback_used: bool
+    route_decision: str | None = None
+    review_notes: str | None = None
+    revision_needed: bool | None = None
+    retrieved_context_count: int | None = None
+    artifact_context_count: int | None = None
     created_at: datetime
 
     # Workflow instrumentation — populated after background task runs

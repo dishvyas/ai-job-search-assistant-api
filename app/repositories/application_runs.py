@@ -2,6 +2,7 @@
 # Keeping DB logic out of routes and services keeps each layer testable in isolation:
 # routes can be tested without a real DB, and services can be tested without HTTP.
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,15 @@ from app.models.application import ApplicationTailoringRun
 from app.models.run_status import RunStatus
 from app.schemas.application import ApplicationTailorRequest
 from app.schemas.llm_output import TailoringLLMOutput
+
+
+def _clear_agent_metadata(run: ApplicationTailoringRun) -> None:
+    """Reset agent-only fields for non-agentic runs."""
+    run.route_decision = None
+    run.review_notes = None
+    run.revision_needed = None
+    run.retrieved_context_count = None
+    run.artifact_context_count = None
 
 
 def create_pending_run(
@@ -76,6 +86,7 @@ def save_completed_run(
     estimated_output_tokens: int,
     estimated_cost_usd: float,
     generation_attempts: int,
+    agent_metadata: Any = None,
 ) -> None:
     """Persist generated output fields, workflow metadata, and mark the run completed."""
     # Append a visible signal to human-readable fields so callers can tell at a glance
@@ -101,6 +112,14 @@ def save_completed_run(
     run.estimated_output_tokens = estimated_output_tokens
     run.estimated_cost_usd = estimated_cost_usd
     run.generation_attempts = generation_attempts
+    if agent_metadata is None:
+        _clear_agent_metadata(run)
+    else:
+        run.route_decision = agent_metadata.route_decision
+        run.review_notes = agent_metadata.review_notes
+        run.revision_needed = agent_metadata.revision_needed
+        run.retrieved_context_count = agent_metadata.retrieved_context_count
+        run.artifact_context_count = agent_metadata.artifact_context_count
 
     db.add(run)
     db.commit()

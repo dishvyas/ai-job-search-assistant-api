@@ -117,6 +117,19 @@ def test_get_run_returns_completed_output(db_session):
     assert isinstance(body["interview_talking_points"], list)
 
 
+def test_single_step_completed_run_has_null_agent_decision_fields(db_session):
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+
+    assert body["route_decision"] is None
+    assert body["review_notes"] is None
+    assert body["revision_needed"] is None
+    assert body["retrieved_context_count"] is None
+    assert body["artifact_context_count"] is None
+
+
 # ---------------------------------------------------------------------------
 # Failed jobs
 # ---------------------------------------------------------------------------

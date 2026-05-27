@@ -152,6 +152,10 @@ def test_saved_report_contains_per_case_results(monkeypatch, tmp_path):
     assert result["case_name"] == "backend_engineer_germany"
     assert result["workflow_mode"] == "single_step"
     assert result["provider"] == "mock"
+    assert "route_decision" in result
+    assert "revision_needed" in result
+    assert "retrieved_context_count" in result
+    assert "artifact_context_count" in result
     assert "checks" in result
 
 
@@ -169,6 +173,30 @@ def test_compare_report_includes_both_workflow_modes(monkeypatch, tmp_path):
     assert workflow_modes == {"single_step", "agentic"}
     assert "comparison_summaries" in report
     assert report["comparison_summaries"][0]["case_name"] == "backend_engineer_germany"
+
+
+def test_agentic_report_includes_agent_decision_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr("evals.run_eval.REPORTS_DIR", tmp_path)
+
+    exit_code = main(
+        [
+            "--workflow-mode",
+            "agentic",
+            "--case",
+            "backend_engineer_germany",
+            "--save-report",
+        ]
+    )
+
+    report_path = next(tmp_path.glob("eval_report_*_mock_agentic.json"))
+    report = json.loads(report_path.read_text())
+    result = report["results"][0]
+
+    assert exit_code == 0
+    assert result["route_decision"] is not None
+    assert result["revision_needed"] is not None
+    assert result["retrieved_context_count"] is not None
+    assert result["artifact_context_count"] is not None
 
 
 def test_generated_reports_are_ignored_by_git():

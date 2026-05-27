@@ -13,6 +13,7 @@ Covers:
 """
 
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -165,24 +166,25 @@ def test_agentic_workflow_returns_tailoring_llm_output(monkeypatch):
     """run_agentic_workflow must return a complete TailoringLLMOutput."""
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
 
-    output, provider, fallback = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, metadata = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert output.tailored_summary
     assert len(output.tailored_bullets) > 0
     assert output.cover_letter_draft
     assert len(output.interview_talking_points) > 0
+    assert metadata.route_decision is not None
 
 
 def test_agentic_workflow_provider_used_is_mock(monkeypatch):
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
-    _, provider, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    _, provider, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
     assert provider == "mock"
 
 
 def test_agentic_workflow_fallback_used_is_false_in_mock_mode(monkeypatch):
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
-    _, _, fallback = run_agentic_workflow(SAMPLE_REQUEST)
+    _, _, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
     assert fallback is False
 
 
@@ -198,11 +200,35 @@ def test_agentic_workflow_fallback_on_provider_failure(monkeypatch):
         "app.services.agentic_tailoring.get_llm_provider", lambda: AlwaysFailProvider()
     )
 
-    output, provider, fallback = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert provider == "fallback-mock"
     assert fallback is True
+
+
+def test_agentic_workflow_metadata_tracks_artifact_context(monkeypatch):
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
+    artifacts = [
+        SimpleNamespace(
+            tailored_summary="Example summary.",
+            tailored_bullets=["Example bullet 1", "Example bullet 2"],
+            fit_gap_analysis="Example fit/gap.",
+        ),
+        SimpleNamespace(
+            tailored_summary="Example summary 2.",
+            tailored_bullets=["Example bullet A", "Example bullet B"],
+            fit_gap_analysis="Example fit/gap 2.",
+        ),
+    ]
+
+    output, _, _, metadata = run_agentic_workflow(
+        SAMPLE_REQUEST,
+        artifact_context=artifacts,
+    )
+
+    assert isinstance(output, TailoringLLMOutput)
+    assert metadata.artifact_context_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +274,20 @@ def test_agentic_mode_get_run_returns_completed_output(db_session, monkeypatch):
     assert isinstance(body["tailored_bullets"], list)
 
 
+def test_agentic_mode_get_run_includes_agent_decision_fields(db_session, monkeypatch):
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
+
+    run_id = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD).json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+
+    assert body["route_decision"] is not None
+    assert body["review_notes"] is not None
+    assert body["revision_needed"] is not None
+    assert body["retrieved_context_count"] is not None
+    assert body["artifact_context_count"] is not None
+
+
 def test_agentic_mode_generation_attempts_is_four(db_session, monkeypatch):
     """4 stages × no fallback = 4 generation attempts."""
     monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
@@ -272,6 +312,10 @@ def test_agentic_mode_metadata_is_populated(db_session, monkeypatch):
     assert run.latency_ms is not None
     assert run.estimated_input_tokens is not None and run.estimated_input_tokens > 0
     assert run.estimated_output_tokens is not None and run.estimated_output_tokens > 0
+    assert run.route_decision is not None
+    assert run.revision_needed is not None
+    assert run.retrieved_context_count is not None
+    assert run.artifact_context_count is not None
 
 
 def test_agentic_mode_fallback_doubles_attempt_count(db_session, monkeypatch):

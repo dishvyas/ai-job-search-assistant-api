@@ -23,6 +23,7 @@ decision-making inside an agent graph without requiring extra LLM calls.
 # everything as function arguments and easier to trace/debug than a single large function.
 import json
 import time
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -81,6 +82,15 @@ class AgenticTailoringState(TypedDict):
     # Tracking fields — reflect the most-recent provider and whether any stage fell back.
     provider_used: str
     fallback_used: bool
+
+
+@dataclass(frozen=True)
+class AgentWorkflowMetadata:
+    route_decision: str | None
+    review_notes: str | None
+    revision_needed: bool
+    retrieved_context_count: int
+    artifact_context_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +576,7 @@ def run_agentic_workflow(
     db: Any = None,
     run_id: int | None = None,
     artifact_context: list[Any] | None = None,
-) -> tuple[TailoringLLMOutput, str, bool]:
+) -> tuple[TailoringLLMOutput, str, bool, AgentWorkflowMetadata]:
     """
     Execute the tool-using agentic workflow and return the final tailoring output.
 
@@ -604,9 +614,17 @@ def run_agentic_workflow(
     }
 
     final_state = graph.invoke(initial_state)
+    metadata = AgentWorkflowMetadata(
+        route_decision=final_state["route_decision"],
+        review_notes=final_state["review_notes"],
+        revision_needed=final_state["revision_needed"],
+        retrieved_context_count=len(final_state["retrieved_context"]),
+        artifact_context_count=len(final_state["artifact_context"]),
+    )
 
     return (
         final_state["final_output"],
         final_state["provider_used"],
         final_state["fallback_used"],
+        metadata,
     )

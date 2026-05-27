@@ -99,6 +99,10 @@ Each result includes:
 - `estimated_cost_usd`
 - `generation_attempts`
 - `fallback_used`
+- `route_decision`
+- `revision_needed`
+- `retrieved_context_count`
+- `artifact_context_count`
 - `run_id`
 - `checks`
 

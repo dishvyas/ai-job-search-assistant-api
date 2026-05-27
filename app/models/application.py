@@ -54,6 +54,11 @@ class ApplicationTailoringRun(Base):
     # Best-effort retrieval index for completed tailored artifacts. Nullable because
     # indexing is optional and may be skipped on local/test setups.
     artifact_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    route_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision_needed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    retrieved_context_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artifact_context_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Metadata (set after processing) ---
     # provider_used is nullable because it is only known after the task runs.

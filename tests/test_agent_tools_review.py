@@ -124,6 +124,7 @@ def _make_state(**overrides) -> dict:
     state = {
         "request": SAMPLE_REQUEST,
         "db": None,
+        "artifact_context": [],
         "resume_analysis": ResumeAnalysis(
             key_skills=["Python", "FastAPI"],
             relevant_experience=["5 years backend"],
@@ -362,7 +363,7 @@ def test_revision_runs_when_review_marks_output_incomplete(monkeypatch):
 
     monkeypatch.setattr("app.services.agentic_tailoring._compose_final", patched_compose_final)
 
-    output, provider, fallback = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     # Revision ran — output should have [MOCK-REVISED] markers from _revision_response.
     assert "[MOCK-REVISED]" in output.tailored_summary
@@ -395,7 +396,7 @@ def test_revision_runs_at_most_once(monkeypatch):
 
     monkeypatch.setattr("app.services.agentic_tailoring._review_output", always_needs_revision)
 
-    output, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    output, _, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     # Revision ran exactly once — the graph structure prevents re-entry.
     assert len(revision_call_count) == 1
@@ -576,7 +577,7 @@ def test_agentic_workflow_completes_with_mock(monkeypatch):
     """Full agentic workflow must complete and return valid TailoringLLMOutput."""
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
 
-    output, provider, fallback = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert output.tailored_summary
@@ -591,7 +592,7 @@ def test_agentic_workflow_completes_without_rag(monkeypatch):
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
     monkeypatch.setattr("app.services.agentic_tailoring.settings.rag_enabled", False)
 
-    output, provider, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert provider == "mock"
@@ -627,8 +628,8 @@ def test_mock_mode_is_deterministic(monkeypatch):
     """Running the agentic workflow twice in mock mode must produce identical output."""
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
 
-    out1, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
-    out2, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    out1, _, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    out2, _, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert out1.tailored_summary == out2.tailored_summary
     assert out1.tailored_bullets == out2.tailored_bullets

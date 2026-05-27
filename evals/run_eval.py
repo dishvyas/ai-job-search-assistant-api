@@ -127,6 +127,10 @@ def _normalize_case_result(
         "estimated_cost_usd": run_data.get("estimated_cost_usd"),
         "generation_attempts": run_data.get("generation_attempts"),
         "fallback_used": run_data.get("fallback_used"),
+        "route_decision": run_data.get("route_decision"),
+        "revision_needed": run_data.get("revision_needed"),
+        "retrieved_context_count": run_data.get("retrieved_context_count"),
+        "artifact_context_count": run_data.get("artifact_context_count"),
         "run_id": result["run_id"],
         "checks": score["checks"],
     }
