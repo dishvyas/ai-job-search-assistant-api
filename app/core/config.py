@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Cosine similarity threshold below which matches are discarded. 0.75 filters
     # weak matches that add noise without adding relevant context to the prompt.
     similarity_threshold: float = 0.75
+    # Tailored-artifact retrieval is a second optional RAG source. Disabled by
+    # default so existing behaviour remains unchanged until explicitly enabled.
+    artifact_retrieval_enabled: bool = False
+    artifact_retrieval_top_k: int = 3
+    artifact_similarity_threshold: float = 0.70
     # Only required when rag_enabled=True and not using mock mode.
     openai_api_key: str | None = None
 

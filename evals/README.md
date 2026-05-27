@@ -82,6 +82,7 @@ python evals/run_eval.py --compare
 - Keyword coverage is shallow and can miss nuance
 - Scores are local regression signals, not production truth
 - The harness runs in mock mode, so it is best for workflow regression and plumbing checks
+- Current deterministic evals do not prove whether tailored-artifact retrieval improves quality
 
 ## Future improvements
 
@@ -90,3 +91,4 @@ python evals/run_eval.py --compare
 - semantic similarity checks
 - provider comparison beyond mock mode
 - regression history over time
+- compare no RAG vs job-description RAG vs tailored-artifact RAG with real providers

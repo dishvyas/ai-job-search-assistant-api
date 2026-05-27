@@ -15,8 +15,13 @@ M10 additions:
 # Each prompt builder is a pure function — no side effects, no LLM calls.
 # This makes prompts testable in isolation and easy to iterate on without
 # touching any service logic.
+from typing import TYPE_CHECKING
+
 from app.schemas.agent import FitGapAnalysis, JobDescriptionAnalysis, ResumeAnalysis
 from app.schemas.application import ApplicationTailorRequest
+
+if TYPE_CHECKING:
+    from app.models.application import ApplicationTailoringRun
 
 # JSON shape examples shown to the LLM in each prompt.
 # Using a concrete example (not an abstract schema) because LLMs follow
@@ -98,6 +103,7 @@ def build_fit_gap_prompt(
     resume_analysis: ResumeAnalysis,
     jd_analysis: JobDescriptionAnalysis,
     retrieved_context: list[str] | None = None,
+    artifact_context: list["ApplicationTailoringRun"] | None = None,
 ) -> str:
     """Stage 3 — identify fit points, gaps, and positioning strategy."""
     # Passing structured skill lists rather than raw resume/JD text keeps the prompt
@@ -139,6 +145,19 @@ def build_fit_gap_prompt(
             " Base your analysis primarily on the resume and job description.",
         ]
 
+    if artifact_context:
+        sections += ["", "## Retrieved Past Tailored Artifacts"]
+        for artifact in artifact_context[:3]:
+            if artifact.tailored_summary:
+                sections += ["", "Summary", artifact.tailored_summary[:250].strip()]
+            if artifact.fit_gap_analysis:
+                sections += ["", "Fit/Gap Preview", artifact.fit_gap_analysis[:250].strip()]
+        sections += [
+            "",
+            "Use these artifact examples as positioning reference only.",
+            "Do not copy claims or invent experience not present in the current resume.",
+        ]
+
     sections += ["", "Respond with the JSON object only. No explanation. No markdown."]
     return "\n".join(sections)
 
@@ -149,6 +168,7 @@ def build_final_tailoring_prompt(
     jd_analysis: JobDescriptionAnalysis,
     fit_gap: FitGapAnalysis,
     retrieved_context: list[str] | None = None,
+    artifact_context: list["ApplicationTailoringRun"] | None = None,
 ) -> str:
     """Stage 4 — compose final application materials using all prior analyses."""
     # Slice to the top 2 fit points and 1 gap point to keep the prompt concise;
@@ -198,6 +218,24 @@ def build_final_tailoring_prompt(
             "",
             "Use the retrieved context above as framing reference only."
             " The resume and job description above are the primary sources of truth.",
+        ]
+
+    if artifact_context:
+        sections += ["", "## Retrieved Past Tailored Artifacts"]
+        for artifact in artifact_context[:3]:
+            if artifact.tailored_summary:
+                sections += ["", "Summary", artifact.tailored_summary[:250].strip()]
+            top_bullets = (artifact.tailored_bullets or [])[:2]
+            if top_bullets:
+                sections += ["Top Bullets"] + [str(bullet).strip() for bullet in top_bullets]
+            if artifact.fit_gap_analysis:
+                sections += ["Fit/Gap Preview", artifact.fit_gap_analysis[:250].strip()]
+        sections += [
+            "",
+            "Use these artifact examples for tone, structure, and positioning inspiration only.",
+            "Do not copy claims.",
+            "Do not invent experience not present in the candidate resume.",
+            "The current resume and job description remain the source of truth.",
         ]
 
     sections += ["", "Respond with the JSON object only. No explanation. No markdown."]

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from app.schemas.application import ApplicationTailorRequest
 
 if TYPE_CHECKING:
+    from app.models.application import ApplicationTailoringRun
     from app.models.job_description import JobDescription
 
 # The exact JSON shape we ask the LLM to produce.
@@ -27,6 +28,7 @@ _JSON_SCHEMA_EXAMPLE = """{
 def build_tailoring_prompt(
     request: ApplicationTailorRequest,
     rag_context: list["JobDescription"] | None = None,
+    artifact_context: list["ApplicationTailoringRun"] | None = None,
 ) -> str:
     """
     Build a structured prompt that instructs the LLM to return valid JSON only.
@@ -68,6 +70,29 @@ def build_tailoring_prompt(
             "",
             "Use the roles above as reference points for industry vocabulary and "
             "common requirements. Do NOT copy them verbatim.",
+        ]
+
+    if artifact_context:
+        sections += ["", "## Retrieved Past Tailored Artifacts"]
+        for i, artifact in enumerate(artifact_context[:3], 1):
+            sections += [
+                "",
+                f"### Artifact Example {i}",
+                "Summary",
+                (artifact.tailored_summary or "")[:300].strip(),
+            ]
+            top_bullets = (artifact.tailored_bullets or [])[:2]
+            if top_bullets:
+                sections += ["Top Bullets"] + [str(bullet).strip() for bullet in top_bullets]
+            if artifact.fit_gap_analysis:
+                sections += ["Fit/Gap Preview", artifact.fit_gap_analysis[:300].strip()]
+        sections += [
+            "",
+            "These are examples of prior generated positioning for similar roles.",
+            "Use them for tone, structure, and positioning inspiration only.",
+            "Do not copy claims.",
+            "Do not invent experience not present in the candidate resume.",
+            "The current master resume and job description are the source of truth.",
         ]
 
     sections += [

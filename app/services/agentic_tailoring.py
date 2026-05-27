@@ -64,6 +64,7 @@ class AgenticTailoringState(TypedDict):
     jd_analysis: JobDescriptionAnalysis | None
     fit_gap: FitGapAnalysis | None
     final_output: TailoringLLMOutput | None
+    artifact_context: list[Any]
 
     # M10 additions
     # retrieved_context: text snippets from RAG retrieval; empty list when unavailable.
@@ -315,11 +316,14 @@ def _analyze_jd(state: AgenticTailoringState) -> dict:
 
 def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
     def _run(state: AgenticTailoringState) -> dict:
+        prompt_kwargs = {"retrieved_context": state["retrieved_context"] or None}
+        if state["artifact_context"]:
+            prompt_kwargs["artifact_context"] = state["artifact_context"]
         prompt = build_fit_gap_prompt(
             state["request"],
             state["resume_analysis"],
             state["jd_analysis"],
-            retrieved_context=state["retrieved_context"] or None,
+            **prompt_kwargs,
         )
         result, provider, fallback = _call_and_parse(prompt, FitGapAnalysis)
         return {
@@ -333,7 +337,8 @@ def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
         step_name="analyze_fit_gap",
         input_summary=(
             f"Comparing resume analysis to JD analysis with "
-            f"{len(state['retrieved_context'])} retrieved context snippets."
+            f"{len(state['retrieved_context'])} job snippets and "
+            f"{len(state['artifact_context'])} artifact examples."
         ),
         run_step=_run,
         build_output_summary=lambda _state, updates: (
@@ -388,12 +393,15 @@ def _decide_route(state: AgenticTailoringState) -> dict:
 
 def _compose_final(state: AgenticTailoringState) -> dict:
     def _run(state: AgenticTailoringState) -> dict:
+        prompt_kwargs = {"retrieved_context": state["retrieved_context"] or None}
+        if state["artifact_context"]:
+            prompt_kwargs["artifact_context"] = state["artifact_context"]
         prompt = build_final_tailoring_prompt(
             state["request"],
             state["resume_analysis"],
             state["jd_analysis"],
             state["fit_gap"],
-            retrieved_context=state["retrieved_context"] or None,
+            **prompt_kwargs,
         )
         result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
         return {
@@ -407,7 +415,8 @@ def _compose_final(state: AgenticTailoringState) -> dict:
         step_name="compose_final",
         input_summary=(
             f"Composing final materials after route {state['route_decision']} "
-            f"with {len(state['retrieved_context'])} retrieved snippets."
+            f"with {len(state['retrieved_context'])} job snippets and "
+            f"{len(state['artifact_context'])} artifact examples."
         ),
         run_step=_run,
         build_output_summary=lambda _state, updates: (
@@ -556,6 +565,7 @@ def run_agentic_workflow(
     request: ApplicationTailorRequest,
     db: Any = None,
     run_id: int | None = None,
+    artifact_context: list[Any] | None = None,
 ) -> tuple[TailoringLLMOutput, str, bool]:
     """
     Execute the tool-using agentic workflow and return the final tailoring output.
@@ -581,6 +591,7 @@ def run_agentic_workflow(
         "jd_analysis": None,
         "fit_gap": None,
         "final_output": None,
+        "artifact_context": artifact_context or [],
         "retrieved_context": [],
         # Default route; will be overwritten by decide_route.
         "route_decision": "proceed_to_tailoring",

@@ -12,6 +12,7 @@ from app.llm.cost_estimation import estimate_generation_cost
 from app.llm.token_estimation import estimate_input_tokens, estimate_output_tokens
 from app.models.run_status import RunStatus
 from app.prompts.tailoring import build_tailoring_prompt
+from app.rag.artifacts import retrieve_similar_artifacts, store_artifact_embedding_for_run
 from app.repositories.application_runs import (
     get_application_tailoring_run,
     save_completed_run,
@@ -75,10 +76,17 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             # retrieve_relevant_jobs returns (jd, score) tuples; we only need the jd.
             rag_context = [jd for jd, _score in retrieved]
 
+        artifact_context = None
+        if settings.rag_enabled and settings.artifact_retrieval_enabled:
+            artifact_context = retrieve_similar_artifacts(db, query=request.job_description)
+
         # Build the single-step prompt; used for input token estimation in both modes.
         # In agentic mode the prompt approximates only the final stage — acceptable
         # because intermediate stage prompts are similar in size to the full prompt.
-        prompt = build_tailoring_prompt(request, rag_context=rag_context)
+        prompt_kwargs = {"rag_context": rag_context}
+        if artifact_context:
+            prompt_kwargs["artifact_context"] = artifact_context
+        prompt = build_tailoring_prompt(request, **prompt_kwargs)
 
         if mode == "single_step":
             generation_attempts = 1
@@ -97,6 +105,7 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
                 request,
                 db=db,
                 run_id=run.id,
+                artifact_context=artifact_context,
             )
             generation_attempts = 4 + (4 if used_fallback else 0)
 
@@ -125,6 +134,10 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             estimated_cost_usd=cost_usd,
             generation_attempts=generation_attempts,
         )
+        try:
+            store_artifact_embedding_for_run(db, run)
+        except Exception:  # noqa: BLE001
+            db.rollback()
 
     except Exception as exc:  # noqa: BLE001
         # Broad catch is intentional — any unhandled exception (config error, DB error,

@@ -3,6 +3,7 @@
 # "outputs" table would add complexity with no benefit at this scale.
 from datetime import UTC, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,6 +51,9 @@ class ApplicationTailoringRun(Base):
     recruiter_message_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     fit_gap_analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
     interview_talking_points: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Best-effort retrieval index for completed tailored artifacts. Nullable because
+    # indexing is optional and may be skipped on local/test setups.
+    artifact_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
 
     # --- Metadata (set after processing) ---
     # provider_used is nullable because it is only known after the task runs.

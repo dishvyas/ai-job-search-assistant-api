@@ -31,6 +31,9 @@ def force_mock_llm_provider(monkeypatch):
     # Without this, any local .env with RAG_ENABLED=true causes background-job
     # tests to attempt a real OpenAI embedding call and fail.
     monkeypatch.setattr("app.services.background_tailoring.settings.rag_enabled", False)
+    monkeypatch.setattr(
+        "app.services.background_tailoring.settings.artifact_retrieval_enabled", False
+    )
     monkeypatch.setattr("app.services.agentic_tailoring.settings.rag_enabled", False)
     monkeypatch.setattr("app.api.v1.routes.jobs.settings.rag_enabled", False)
 

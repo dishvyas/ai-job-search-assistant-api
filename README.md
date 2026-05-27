@@ -892,3 +892,45 @@ python evals/run_eval.py --workflow-mode single_step --case backend_engineer_ger
 - semantic scoring
 - external eval platforms
 - real production benchmark datasets
+
+---
+
+## Milestone 13 — Tailored Artifact Retrieval
+
+Extends the RAG pipeline so the app can optionally retrieve prior generated tailoring artifacts, not just raw job descriptions. This is disabled by default and remains best-effort.
+
+**Why tailored-artifact retrieval matters:**
+- raw job descriptions mostly provide role requirements and vocabulary
+- past tailored outputs capture positioning patterns, tone, and output structure
+- similar generated artifacts can be more useful than generic JDs when the goal is better application materials, not just requirement matching
+
+**Job-description RAG vs tailored-artifact RAG:**
+- Job-description RAG retrieves similar roles and requirement language from stored JDs
+- Tailored-artifact RAG retrieves prior generated summaries, bullets, fit/gap framing, interview points, and recruiter messaging
+- Job-description RAG is about role context
+- Tailored-artifact RAG is about reusable positioning style and structure
+
+**Guardrails for artifact retrieval:**
+- use retrieved artifacts for tone, structure, and positioning inspiration only
+- do not copy claims
+- do not invent experience not present in the current resume
+- the current master resume and job description remain the source of truth
+
+**What gets indexed as an artifact:**
+- `tailored_summary`
+- `tailored_bullets`
+- `fit_gap_analysis`
+- `interview_talking_points`
+- `recruiter_message_draft`
+
+**What does not get indexed:**
+- full `master_resume`
+- full `job_description`
+- raw prompts
+- trace data
+
+**Operational notes:**
+- artifact retrieval is disabled by default
+- artifact indexing is best-effort after a completed run is saved
+- if artifact embedding generation fails, the run stays completed
+- when `RAG_ENABLED=false`, existing behavior remains unchanged

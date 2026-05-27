@@ -111,3 +111,14 @@ def get_application_tailoring_run(db: Session, run_id: int) -> ApplicationTailor
     # db.get uses the identity map — returns the cached instance if already loaded
     # in this session, avoiding a redundant SELECT.
     return db.get(ApplicationTailoringRun, run_id)
+
+
+def save_artifact_embedding(
+    db: Session,
+    run: ApplicationTailoringRun,
+    embedding: list[float],
+) -> None:
+    """Persist an artifact embedding on an existing completed run."""
+    run.artifact_embedding = embedding
+    db.add(run)
+    db.commit()
