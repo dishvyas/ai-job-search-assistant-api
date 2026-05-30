@@ -15,6 +15,9 @@ class AgentTraceStepResponse(BaseModel):
     provider_used: str | None = None
     fallback_used: bool
     latency_ms: int | None = None
+    estimated_input_tokens: int | None = None
+    estimated_output_tokens: int | None = None
+    estimated_cost_usd: float | None = None
     error_message: str | None = None
     created_at: datetime
 

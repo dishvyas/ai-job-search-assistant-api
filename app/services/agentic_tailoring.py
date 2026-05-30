@@ -30,9 +30,11 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
 from app.core.config import settings
+from app.llm.cost_estimation import estimate_generation_cost
 from app.llm.exceptions import LLMOutputParsingError, LLMProviderError
 from app.llm.factory import get_llm_provider
 from app.llm.mock import MockLLMProvider
+from app.llm.token_estimation import estimate_input_tokens, estimate_output_tokens
 from app.prompts.agentic_tailoring import (
     build_final_tailoring_prompt,
     build_fit_gap_prompt,
@@ -93,31 +95,56 @@ class AgentWorkflowMetadata:
     artifact_context_count: int
 
 
+@dataclass(frozen=True)
+class StageLLMCall:
+    parsed: object
+    provider_used: str
+    fallback_used: bool
+    raw_text: str
+
+
+@dataclass(frozen=True)
+class StageTraceEstimates:
+    estimated_input_tokens: int
+    estimated_output_tokens: int
+    estimated_cost_usd: float
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _call_and_parse(prompt: str, model_class: type) -> tuple[object, str, bool]:
+def _call_and_parse(prompt: str, model_class: type) -> StageLLMCall:
     """
     Call the configured LLM provider and parse the response into model_class.
 
     Falls back to MockLLMProvider if the configured provider raises LLMProviderError
     or if the response can't be parsed into the expected schema.
 
-    Returns (parsed_instance, provider_used, fallback_used).
+    Returns the parsed output together with lightweight metadata about the call.
     """
     configured = settings.llm_provider.lower()
 
     try:
         raw = get_llm_provider().generate_text(prompt)
-        return _parse(raw, model_class), configured, False
+        return StageLLMCall(
+            parsed=_parse(raw, model_class),
+            provider_used=configured,
+            fallback_used=False,
+            raw_text=raw,
+        )
     except (LLMProviderError, LLMOutputParsingError):
         pass  # fall through to mock — same fallback logic as the single-step path
 
     raw = MockLLMProvider().generate_text(prompt)
     # If mock raises here it is a code bug, not a runtime condition — let it propagate.
-    return _parse(raw, model_class), "fallback-mock", True
+    return StageLLMCall(
+        parsed=_parse(raw, model_class),
+        provider_used="fallback-mock",
+        fallback_used=True,
+        raw_text=raw,
+    )
 
 
 def _parse(raw: str, model_class: type) -> object:
@@ -149,6 +176,23 @@ def _truncate_summary(text: str, limit: int = 240) -> str:
     return compact[: limit - 3] + "..."
 
 
+def _estimate_stage_usage(prompt: str, raw_text: str, provider_used: str) -> StageTraceEstimates:
+    """
+    Approximate per-stage token and cost usage from prompt/response text only.
+
+    These values are intentionally rough. Exact billing would require provider-native
+    usage metadata or provider-specific tokenizers, which this milestone avoids.
+    """
+    input_tokens = estimate_input_tokens(prompt)
+    output_tokens = estimate_output_tokens(raw_text)
+    cost_usd = estimate_generation_cost(input_tokens, output_tokens, provider_used)
+    return StageTraceEstimates(
+        estimated_input_tokens=input_tokens,
+        estimated_output_tokens=output_tokens,
+        estimated_cost_usd=cost_usd,
+    )
+
+
 def _save_trace_step(
     state: AgenticTailoringState,
     *,
@@ -159,6 +203,9 @@ def _save_trace_step(
     provider_used: str | None,
     fallback_used: bool,
     latency_ms: int | None,
+    estimated_input_tokens: int | None = None,
+    estimated_output_tokens: int | None = None,
+    estimated_cost_usd: float | None = None,
     error_message: str | None = None,
 ) -> None:
     """Best-effort trace persistence; never fail the workflow over observability."""
@@ -178,6 +225,9 @@ def _save_trace_step(
             provider_used=provider_used,
             fallback_used=fallback_used,
             latency_ms=latency_ms,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=estimated_output_tokens,
+            estimated_cost_usd=estimated_cost_usd,
             error_message=error_message,
         )
     except Exception:  # noqa: BLE001
@@ -196,7 +246,7 @@ def _run_traced_step(
     started = time.perf_counter()
 
     try:
-        updates = run_step(state)
+        updates, trace_estimates = run_step(state)
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.perf_counter() - started) * 1000)
         _save_trace_step(
@@ -208,6 +258,9 @@ def _run_traced_step(
             provider_used=state.get("provider_used"),
             fallback_used=state.get("fallback_used", False),
             latency_ms=latency_ms,
+            estimated_input_tokens=None,
+            estimated_output_tokens=None,
+            estimated_cost_usd=None,
             error_message=_truncate_summary(str(exc)),
         )
         raise
@@ -224,6 +277,13 @@ def _run_traced_step(
         provider_used=provider_used,
         fallback_used=fallback_used,
         latency_ms=latency_ms,
+        estimated_input_tokens=(
+            None if trace_estimates is None else trace_estimates.estimated_input_tokens
+        ),
+        estimated_output_tokens=(
+            None if trace_estimates is None else trace_estimates.estimated_output_tokens
+        ),
+        estimated_cost_usd=None if trace_estimates is None else trace_estimates.estimated_cost_usd,
     )
     return updates
 
@@ -251,7 +311,7 @@ def _retrieve_context(state: AgenticTailoringState) -> dict:
     # including all pre-M10 tests.
     def _run(state: AgenticTailoringState) -> dict:
         if not settings.rag_enabled or state.get("db") is None:
-            return {"retrieved_context": []}
+            return {"retrieved_context": []}, None
 
         try:
             # Lazy import keeps pgvector optional — it only needs to be installed when RAG
@@ -260,9 +320,9 @@ def _retrieve_context(state: AgenticTailoringState) -> dict:
 
             results = retrieve_relevant_jobs(state["db"], query=state["request"].job_description)
             snippets = [(jd.raw_text or "")[:300].strip() for jd, _ in results]
-            return {"retrieved_context": snippets}
+            return {"retrieved_context": snippets}, None
         except Exception:  # noqa: BLE001
-            return {"retrieved_context": []}
+            return {"retrieved_context": []}, None
 
     return _run_traced_step(
         state,
@@ -280,12 +340,15 @@ def _retrieve_context(state: AgenticTailoringState) -> dict:
 def _analyze_resume(state: AgenticTailoringState) -> dict:
     def _run(state: AgenticTailoringState) -> dict:
         prompt = build_resume_analysis_prompt(state["request"])
-        result, provider, fallback = _call_and_parse(prompt, ResumeAnalysis)
-        return {
-            "resume_analysis": result,
-            "provider_used": provider,
-            "fallback_used": state["fallback_used"] or fallback,
-        }
+        call = _call_and_parse(prompt, ResumeAnalysis)
+        return (
+            {
+                "resume_analysis": call.parsed,
+                "provider_used": call.provider_used,
+                "fallback_used": state["fallback_used"] or call.fallback_used,
+            },
+            _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
+        )
 
     return _run_traced_step(
         state,
@@ -304,12 +367,15 @@ def _analyze_resume(state: AgenticTailoringState) -> dict:
 def _analyze_jd(state: AgenticTailoringState) -> dict:
     def _run(state: AgenticTailoringState) -> dict:
         prompt = build_jd_analysis_prompt(state["request"])
-        result, provider, fallback = _call_and_parse(prompt, JobDescriptionAnalysis)
-        return {
-            "jd_analysis": result,
-            "provider_used": provider,
-            "fallback_used": state["fallback_used"] or fallback,
-        }
+        call = _call_and_parse(prompt, JobDescriptionAnalysis)
+        return (
+            {
+                "jd_analysis": call.parsed,
+                "provider_used": call.provider_used,
+                "fallback_used": state["fallback_used"] or call.fallback_used,
+            },
+            _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
+        )
 
     return _run_traced_step(
         state,
@@ -335,12 +401,15 @@ def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
             state["jd_analysis"],
             **prompt_kwargs,
         )
-        result, provider, fallback = _call_and_parse(prompt, FitGapAnalysis)
-        return {
-            "fit_gap": result,
-            "provider_used": provider,
-            "fallback_used": state["fallback_used"] or fallback,
-        }
+        call = _call_and_parse(prompt, FitGapAnalysis)
+        return (
+            {
+                "fit_gap": call.parsed,
+                "provider_used": call.provider_used,
+                "fallback_used": state["fallback_used"] or call.fallback_used,
+            },
+            _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
+        )
 
     return _run_traced_step(
         state,
@@ -385,7 +454,7 @@ def _decide_route(state: AgenticTailoringState) -> dict:
         else:
             route = "proceed_to_tailoring"
 
-        return {"route_decision": route}
+        return {"route_decision": route}, None
 
     return _run_traced_step(
         state,
@@ -413,12 +482,15 @@ def _compose_final(state: AgenticTailoringState) -> dict:
             state["fit_gap"],
             **prompt_kwargs,
         )
-        result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
-        return {
-            "final_output": result,
-            "provider_used": provider,
-            "fallback_used": state["fallback_used"] or fallback,
-        }
+        call = _call_and_parse(prompt, TailoringLLMOutput)
+        return (
+            {
+                "final_output": call.parsed,
+                "provider_used": call.provider_used,
+                "fallback_used": state["fallback_used"] or call.fallback_used,
+            },
+            _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
+        )
 
     return _run_traced_step(
         state,
@@ -460,12 +532,15 @@ def _review_output(state: AgenticTailoringState) -> dict:
     def _run(_state: AgenticTailoringState) -> dict:
         if issues:
             notes = "Output incomplete — " + "; ".join(issues) + "."
-            return {"revision_needed": True, "review_notes": notes}
+            return {"revision_needed": True, "review_notes": notes}, None
 
-        return {
-            "revision_needed": False,
-            "review_notes": "Review passed: all required sections are present.",
-        }
+        return (
+            {
+                "revision_needed": False,
+                "review_notes": "Review passed: all required sections are present.",
+            },
+            None,
+        )
 
     return _run_traced_step(
         state,
@@ -496,12 +571,15 @@ def _revise_output(state: AgenticTailoringState) -> dict:
             current_output_json=current_json,
             review_notes=state["review_notes"] or "",
         )
-        result, provider, fallback = _call_and_parse(prompt, TailoringLLMOutput)
-        return {
-            "final_output": result,
-            "provider_used": provider,
-            "fallback_used": state["fallback_used"] or fallback,
-        }
+        call = _call_and_parse(prompt, TailoringLLMOutput)
+        return (
+            {
+                "final_output": call.parsed,
+                "provider_used": call.provider_used,
+                "fallback_used": state["fallback_used"] or call.fallback_used,
+            },
+            _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
+        )
 
     return _run_traced_step(
         state,

@@ -110,6 +110,11 @@ Each result includes:
 - `run_id`
 - `checks`
 
+Eval reports currently include workflow-level cost metadata. Per-agent-stage
+cost is available through `GET /api/v1/applications/runs/{run_id}/trace`.
+Future eval reports can aggregate stage-level trace cost when deeper agentic
+cost comparisons become useful.
+
 ## Adding a new case
 
 1. Add a new JSON file to `evals/cases/`

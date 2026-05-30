@@ -14,6 +14,9 @@ def create_agent_trace_step(
     provider_used: str | None = None,
     fallback_used: bool = False,
     latency_ms: int | None = None,
+    estimated_input_tokens: int | None = None,
+    estimated_output_tokens: int | None = None,
+    estimated_cost_usd: float | None = None,
     error_message: str | None = None,
 ) -> AgentTraceStep:
     """Persist and return one agent workflow trace step."""
@@ -26,6 +29,9 @@ def create_agent_trace_step(
         provider_used=provider_used,
         fallback_used=fallback_used,
         latency_ms=latency_ms,
+        estimated_input_tokens=estimated_input_tokens,
+        estimated_output_tokens=estimated_output_tokens,
+        estimated_cost_usd=estimated_cost_usd,
         error_message=error_message,
     )
     db.add(step)

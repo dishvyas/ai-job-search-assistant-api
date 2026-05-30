@@ -63,6 +63,52 @@ def test_trace_endpoint_returns_steps_in_order(db_session, monkeypatch):
     assert [step["id"] for step in body["steps"]] == sorted(step["id"] for step in body["steps"])
 
 
+def test_trace_endpoint_exposes_stage_token_and_cost_fields(db_session, monkeypatch):
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
+
+    run_id = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD).json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}/trace").json()
+
+    first_step = body["steps"][0]
+    assert "estimated_input_tokens" in first_step
+    assert "estimated_output_tokens" in first_step
+    assert "estimated_cost_usd" in first_step
+
+
+def test_llm_calling_trace_steps_include_non_negative_estimates(db_session, monkeypatch):
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
+
+    run_id = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD).json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}/trace").json()
+    steps_by_name = {step["step_name"]: step for step in body["steps"]}
+
+    for step_name in ["analyze_resume", "analyze_jd", "analyze_fit_gap", "compose_final"]:
+        step = steps_by_name[step_name]
+        assert step["estimated_input_tokens"] is not None
+        assert step["estimated_input_tokens"] > 0
+        assert step["estimated_output_tokens"] is not None
+        assert step["estimated_output_tokens"] > 0
+        assert step["estimated_cost_usd"] is not None
+        assert step["estimated_cost_usd"] >= 0.0
+
+
+def test_deterministic_trace_steps_do_not_claim_llm_cost(db_session, monkeypatch):
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
+
+    run_id = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD).json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}/trace").json()
+    steps_by_name = {step["step_name"]: step for step in body["steps"]}
+
+    for step_name in ["retrieve_context", "decide_route", "review_output"]:
+        step = steps_by_name[step_name]
+        assert step["estimated_input_tokens"] is None
+        assert step["estimated_output_tokens"] is None
+        assert step["estimated_cost_usd"] is None
+
+
 def test_trace_endpoint_returns_empty_list_for_single_step_runs(db_session, monkeypatch):
     monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "single_step")
 
@@ -124,6 +170,12 @@ def test_revise_output_trace_appears_only_when_revision_runs(db_session, monkeyp
     )
     assert steps[-1].step_name == "revise_output"
     assert steps[-2].step_name == "review_output"
+    assert steps[-1].estimated_input_tokens is not None
+    assert steps[-1].estimated_input_tokens > 0
+    assert steps[-1].estimated_output_tokens is not None
+    assert steps[-1].estimated_output_tokens > 0
+    assert steps[-1].estimated_cost_usd is not None
+    assert steps[-1].estimated_cost_usd >= 0.0
 
 
 def test_trace_write_failure_does_not_fail_agentic_workflow(db_session, monkeypatch):

@@ -218,6 +218,34 @@ If `POST /api/v1/jobs/ingest` returns `503 Service Unavailable`, check:
 - `EMBEDDING_MODEL`
 - model access for the configured embedding model
 
+## Milestone — Agent Stage Cost Metadata
+
+Workflow-level metadata is useful for seeing the total latency, approximate
+tokens, and rough cost of a completed run. Once the workflow becomes agentic,
+that total is not enough to explain where the expensive work happened.
+
+This milestone adds approximate per-stage metadata to
+`GET /api/v1/applications/runs/{run_id}/trace`:
+
+- `estimated_input_tokens`
+- `estimated_output_tokens`
+- `estimated_cost_usd`
+
+Why this matters:
+
+- workflow-level metadata answers "what did this run cost overall?"
+- agent-stage metadata answers "which node spent the tokens and time?"
+- stage-level estimates make it easier to debug expensive prompts, large
+  revision passes, and multi-call agent behavior
+
+These values are intentionally approximate. Exact billing would require
+provider-native usage metadata or provider-specific tokenizer libraries, which
+this project intentionally avoids to keep the implementation lightweight and
+interview-explainable.
+
+Raw prompts and raw model responses are still not stored in traces. The trace
+table continues to store only compact summaries plus observability metadata.
+
 ---
 
 ---
