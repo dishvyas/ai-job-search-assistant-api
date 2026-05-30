@@ -69,10 +69,11 @@ def test_get_llm_output_returns_parsed_output_on_success(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: mock_provider
     )
 
-    output, provider_used, used_fallback = _get_llm_output("some prompt")
+    output, provider_used, used_fallback, fallback_reason = _get_llm_output("some prompt")
 
     assert used_fallback is False
     assert provider_used == "mock"
+    assert fallback_reason is None
     assert isinstance(output, TailoringLLMOutput)
 
 
@@ -87,11 +88,29 @@ def test_get_llm_output_falls_back_on_provider_error(monkeypatch):
         "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
     )
 
-    output, provider_used, used_fallback = _get_llm_output("some prompt")
+    output, provider_used, used_fallback, fallback_reason = _get_llm_output("some prompt")
 
     assert used_fallback is True
     assert provider_used == "fallback-mock"
+    assert "LLMProviderUnavailableError" in fallback_reason
     assert isinstance(output, TailoringLLMOutput)
+
+
+def test_get_llm_output_sanitizes_fallback_reason(monkeypatch):
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise LLMProviderUnavailableError("OpenAI request failed sk-secret-test-key")
+
+    monkeypatch.setattr(
+        "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
+    )
+
+    _, _, used_fallback, fallback_reason = _get_llm_output("some prompt")
+
+    assert used_fallback is True
+    assert "LLMProviderUnavailableError" in fallback_reason
+    assert "sk-secret-test-key" not in fallback_reason
+    assert "Traceback" not in fallback_reason
 
 
 def test_get_llm_output_does_not_catch_non_llm_errors(monkeypatch):

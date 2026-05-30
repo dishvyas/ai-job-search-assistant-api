@@ -166,7 +166,7 @@ def test_agentic_workflow_returns_tailoring_llm_output(monkeypatch):
     """run_agentic_workflow must return a complete TailoringLLMOutput."""
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
 
-    output, provider, fallback, metadata = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, metadata, fallback_reason = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert output.tailored_summary
@@ -174,17 +174,18 @@ def test_agentic_workflow_returns_tailoring_llm_output(monkeypatch):
     assert output.cover_letter_draft
     assert len(output.interview_talking_points) > 0
     assert metadata.route_decision is not None
+    assert fallback_reason is None
 
 
 def test_agentic_workflow_provider_used_is_mock(monkeypatch):
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
-    _, provider, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    _, provider, _, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
     assert provider == "mock"
 
 
 def test_agentic_workflow_fallback_used_is_false_in_mock_mode(monkeypatch):
     monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
-    _, _, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    _, _, fallback, _, _ = run_agentic_workflow(SAMPLE_REQUEST)
     assert fallback is False
 
 
@@ -200,11 +201,12 @@ def test_agentic_workflow_fallback_on_provider_failure(monkeypatch):
         "app.services.agentic_tailoring.get_llm_provider", lambda: AlwaysFailProvider()
     )
 
-    output, provider, fallback, _ = run_agentic_workflow(SAMPLE_REQUEST)
+    output, provider, fallback, _, fallback_reason = run_agentic_workflow(SAMPLE_REQUEST)
 
     assert isinstance(output, TailoringLLMOutput)
     assert provider == "fallback-mock"
     assert fallback is True
+    assert "LLMProviderUnavailableError" in fallback_reason
 
 
 def test_agentic_workflow_metadata_tracks_artifact_context(monkeypatch):
@@ -222,7 +224,7 @@ def test_agentic_workflow_metadata_tracks_artifact_context(monkeypatch):
         ),
     ]
 
-    output, _, _, metadata = run_agentic_workflow(
+    output, _, _, metadata, _ = run_agentic_workflow(
         SAMPLE_REQUEST,
         artifact_context=artifacts,
     )
@@ -336,6 +338,29 @@ def test_agentic_mode_fallback_doubles_attempt_count(db_session, monkeypatch):
 
     assert run.generation_attempts == 8
     assert run.fallback_used is True
+
+
+def test_agentic_provider_failure_stores_fallback_reason(db_session, monkeypatch):
+    from app.llm.exceptions import LLMProviderUnavailableError
+
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise LLMProviderUnavailableError("OpenAI request failed sk-agentic-secret")
+
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "agentic")
+    monkeypatch.setattr(
+        "app.services.agentic_tailoring.get_llm_provider", lambda: FailingProvider()
+    )
+
+    run_id = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD).json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+
+    assert body["status"] == RunStatus.COMPLETED.value
+    assert body["fallback_used"] is True
+    assert body["fallback_reason"] is not None
+    assert "fallback" in body["fallback_reason"]
+    assert "LLMProviderUnavailableError" in body["fallback_reason"]
+    assert "sk-agentic-secret" not in body["fallback_reason"]
 
 
 # ---------------------------------------------------------------------------

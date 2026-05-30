@@ -210,6 +210,7 @@ def test_saved_report_contains_per_case_results(monkeypatch, tmp_path):
     assert "revision_needed" in result
     assert "retrieved_context_count" in result
     assert "artifact_context_count" in result
+    assert "fallback_reason" in result
     assert "checks" in result
 
 
@@ -256,3 +257,52 @@ def test_agentic_report_includes_agent_decision_metadata(monkeypatch, tmp_path):
 def test_generated_reports_are_ignored_by_git():
     gitignore_contents = REPORTS_DIR.parent.parent.joinpath(".gitignore").read_text()
     assert "evals/reports/*.json" in gitignore_contents
+
+
+def test_saved_report_includes_fallback_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr("evals.run_eval.REPORTS_DIR", tmp_path)
+
+    fake_results = [
+        {
+            "case_name": "backend_engineer_germany",
+            "run_id": 123,
+            "run_data": {
+                "latency_ms": 12,
+                "estimated_cost_usd": 0.0,
+                "generation_attempts": 2,
+                "fallback_used": True,
+                "fallback_reason": "LLMProviderUnavailableError: OpenAI request failed",
+                "route_decision": None,
+                "revision_needed": None,
+                "retrieved_context_count": None,
+                "artifact_context_count": None,
+                "provider_used": "fallback-mock",
+            },
+            "score": {
+                "passed": True,
+                "total_score": 10,
+                "max_score": 10,
+                "checks": [],
+            },
+        }
+    ]
+
+    monkeypatch.setattr("evals.run_eval.run_workflow_mode", lambda *args, **kwargs: fake_results)
+
+    exit_code = main(
+        [
+            "--workflow-mode",
+            "single_step",
+            "--case",
+            "backend_engineer_germany",
+            "--save-report",
+        ]
+    )
+
+    report_path = next(tmp_path.glob("eval_report_*_mock_single_step.json"))
+    report = json.loads(report_path.read_text())
+    result = report["results"][0]
+
+    assert exit_code == 0
+    assert result["fallback_used"] is True
+    assert result["fallback_reason"] == "LLMProviderUnavailableError: OpenAI request failed"

@@ -93,7 +93,7 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
 
         if mode == "single_step":
             generation_attempts = 1
-            llm_output, provider_used, used_fallback = _get_llm_output(prompt)
+            llm_output, provider_used, used_fallback, fallback_reason = _get_llm_output(prompt)
             agent_metadata = None
             # Each fallback = one additional attempt (primary failed, mock succeeded).
             if used_fallback:
@@ -105,7 +105,13 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             # Generation attempt accounting: 4 analysis/composition stages + optional
             # revision (absorbed into approximation); doubled if any stage fell back.
             # This intentionally approximates rather than tracking every possible path.
-            llm_output, provider_used, used_fallback, agent_metadata = run_agentic_workflow(
+            (
+                llm_output,
+                provider_used,
+                used_fallback,
+                agent_metadata,
+                fallback_reason,
+            ) = run_agentic_workflow(
                 request,
                 db=db,
                 run_id=run.id,
@@ -137,6 +143,7 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
             estimated_output_tokens=output_tokens,
             estimated_cost_usd=cost_usd,
             generation_attempts=generation_attempts,
+            fallback_reason=fallback_reason,
             agent_metadata=agent_metadata,
         )
         try:

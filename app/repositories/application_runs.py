@@ -32,6 +32,7 @@ def create_pending_run(
         company_info=request.company_info,
         user_preferences=request.user_preferences,
         status=RunStatus.PENDING.value,
+        fallback_reason=None,
     )
     db.add(run)
     db.commit()
@@ -57,6 +58,8 @@ def update_run_status(
     the processing→failed path and can be extended for other transitions.
     """
     run.status = status
+    if status == RunStatus.FAILED.value:
+        run.fallback_reason = None
     # Only update optional fields when explicitly provided — avoids overwriting
     # previously-set values with None when the caller omits them.
     if error_message is not None:
@@ -86,6 +89,7 @@ def save_completed_run(
     estimated_output_tokens: int,
     estimated_cost_usd: float,
     generation_attempts: int,
+    fallback_reason: str | None = None,
     agent_metadata: Any = None,
 ) -> None:
     """Persist generated output fields, workflow metadata, and mark the run completed."""
@@ -102,6 +106,7 @@ def save_completed_run(
     run.interview_talking_points = llm_output.interview_talking_points
     run.provider_used = provider_used
     run.fallback_used = fallback_used
+    run.fallback_reason = fallback_reason if fallback_used else None
     run.status = RunStatus.COMPLETED.value
 
     # Workflow instrumentation

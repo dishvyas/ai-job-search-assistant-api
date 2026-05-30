@@ -122,6 +122,8 @@ def test_service_falls_back_when_parsing_fails(db_session, monkeypatch):
     body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert post_response.status_code == 200
     assert "[Fallback mode used]" in body["tailored_summary"]
+    assert body["fallback_used"] is True
+    assert "LLMOutputParsingError" in body["fallback_reason"]
 
 
 def test_service_falls_back_when_provider_unavailable(db_session, monkeypatch):
@@ -142,6 +144,8 @@ def test_service_falls_back_when_provider_unavailable(db_session, monkeypatch):
     body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert post_response.status_code == 200
     assert "[Fallback mode used]" in body["tailored_summary"]
+    assert body["fallback_used"] is True
+    assert "LLMProviderUnavailableError" in body["fallback_reason"]
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,8 @@ class ApplicationTailoringRun(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default=RunStatus.PENDING.value)
     # error_message is only set on failed runs; null on all other statuses.
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # fallback_reason is only set on completed fallback runs; null otherwise.
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- AI outputs (nullable until status=completed) ---
     # JSON columns avoid a separate bullets/points table — list-valued fields that

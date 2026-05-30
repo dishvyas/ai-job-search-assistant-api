@@ -74,6 +74,7 @@ def test_tailor_fallback_metadata_is_stored(db_session, monkeypatch):
     run = db_session.query(ApplicationTailoringRun).first()
     assert run.fallback_used is True
     assert run.provider_used == "fallback-mock"
+    assert run.fallback_reason is not None
 
 
 # ---------------------------------------------------------------------------

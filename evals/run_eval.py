@@ -129,6 +129,7 @@ def _normalize_case_result(
         "estimated_cost_usd": run_data.get("estimated_cost_usd"),
         "generation_attempts": run_data.get("generation_attempts"),
         "fallback_used": run_data.get("fallback_used"),
+        "fallback_reason": run_data.get("fallback_reason"),
         "route_decision": run_data.get("route_decision"),
         "revision_needed": run_data.get("revision_needed"),
         "retrieved_context_count": run_data.get("retrieved_context_count"),
@@ -238,6 +239,8 @@ def format_run_report(
             f"attempts={run_data.get('generation_attempts')} "
             f"provider={run_data.get('provider_used')}"
         )
+        if run_data.get("fallback_used") and run_data.get("fallback_reason"):
+            lines.append(f"  fallback_reason={run_data.get('fallback_reason')}")
         for check in score["checks"]:
             marker = "ok" if check["passed"] else "x"
             lines.append(

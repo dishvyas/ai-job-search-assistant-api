@@ -1069,6 +1069,35 @@ Adds a compact, safe agent decision summary to `GET /api/v1/applications/runs/{r
 - the trace endpoint still exists for stage-by-stage debug detail
 - compact decision metadata is easier to surface than full internal traces
 
+---
+
+## Milestone 17 — Fallback Reason Metadata
+
+Adds a safe `fallback_reason` field to completed runs so successful-but-degraded
+responses explain why mock fallback was used.
+
+**What this adds:**
+- `fallback_reason` on `GET /api/v1/applications/runs/{run_id}`
+- `fallback_reason` in saved eval report results
+- safe degraded-success observability for provider and parsing failures
+
+**Why this matters:**
+- `error_message` is for failed runs
+- `fallback_reason` is for completed runs that succeeded via fallback
+- this makes it much easier to diagnose provider quota, timeout, model access,
+  or parsing problems without confusing degraded success with a true failure
+
+**Example degraded-success metadata:**
+- `provider_used="fallback-mock"`
+- `fallback_used=true`
+- `fallback_reason="LLMProviderUnavailableError: OpenAI request failed"`
+
+The fallback reason is intentionally short and sanitized:
+- no raw prompts
+- no raw model outputs
+- no stack traces
+- no API keys or secrets
+
 **Run summary vs trace endpoint:**
 - `GET /runs/{run_id}` now returns a compact workflow summary
 - `GET /runs/{run_id}/trace` still returns per-stage debug detail

@@ -33,6 +33,7 @@ from app.core.config import settings
 from app.llm.cost_estimation import estimate_generation_cost
 from app.llm.exceptions import LLMOutputParsingError, LLMProviderError
 from app.llm.factory import get_llm_provider
+from app.llm.fallback_reason import sanitize_fallback_reason
 from app.llm.mock import MockLLMProvider
 from app.llm.token_estimation import estimate_input_tokens, estimate_output_tokens
 from app.prompts.agentic_tailoring import (
@@ -84,6 +85,7 @@ class AgenticTailoringState(TypedDict):
     # Tracking fields — reflect the most-recent provider and whether any stage fell back.
     provider_used: str
     fallback_used: bool
+    fallback_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ class AgentWorkflowMetadata:
     revision_needed: bool
     retrieved_context_count: int
     artifact_context_count: int
+    fallback_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,7 @@ class StageLLMCall:
     provider_used: str
     fallback_used: bool
     raw_text: str
+    fallback_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -133,9 +137,12 @@ def _call_and_parse(prompt: str, model_class: type) -> StageLLMCall:
             provider_used=configured,
             fallback_used=False,
             raw_text=raw,
+            fallback_reason=None,
         )
-    except (LLMProviderError, LLMOutputParsingError):
-        pass  # fall through to mock — same fallback logic as the single-step path
+    except LLMProviderError as exc:
+        fallback_reason = sanitize_fallback_reason(exc)
+    except LLMOutputParsingError as exc:
+        fallback_reason = sanitize_fallback_reason(exc)
 
     raw = MockLLMProvider().generate_text(prompt)
     # If mock raises here it is a code bug, not a runtime condition — let it propagate.
@@ -144,6 +151,7 @@ def _call_and_parse(prompt: str, model_class: type) -> StageLLMCall:
         provider_used="fallback-mock",
         fallback_used=True,
         raw_text=raw,
+        fallback_reason=fallback_reason,
     )
 
 
@@ -346,6 +354,12 @@ def _analyze_resume(state: AgenticTailoringState) -> dict:
                 "resume_analysis": call.parsed,
                 "provider_used": call.provider_used,
                 "fallback_used": state["fallback_used"] or call.fallback_used,
+                "fallback_reason": state["fallback_reason"]
+                or (
+                    None
+                    if call.fallback_reason is None
+                    else f"analyze_resume fallback: {call.fallback_reason}"
+                ),
             },
             _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
         )
@@ -373,6 +387,12 @@ def _analyze_jd(state: AgenticTailoringState) -> dict:
                 "jd_analysis": call.parsed,
                 "provider_used": call.provider_used,
                 "fallback_used": state["fallback_used"] or call.fallback_used,
+                "fallback_reason": state["fallback_reason"]
+                or (
+                    None
+                    if call.fallback_reason is None
+                    else f"analyze_jd fallback: {call.fallback_reason}"
+                ),
             },
             _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
         )
@@ -407,6 +427,12 @@ def _analyze_fit_gap(state: AgenticTailoringState) -> dict:
                 "fit_gap": call.parsed,
                 "provider_used": call.provider_used,
                 "fallback_used": state["fallback_used"] or call.fallback_used,
+                "fallback_reason": state["fallback_reason"]
+                or (
+                    None
+                    if call.fallback_reason is None
+                    else f"analyze_fit_gap fallback: {call.fallback_reason}"
+                ),
             },
             _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
         )
@@ -488,6 +514,12 @@ def _compose_final(state: AgenticTailoringState) -> dict:
                 "final_output": call.parsed,
                 "provider_used": call.provider_used,
                 "fallback_used": state["fallback_used"] or call.fallback_used,
+                "fallback_reason": state["fallback_reason"]
+                or (
+                    None
+                    if call.fallback_reason is None
+                    else f"compose_final fallback: {call.fallback_reason}"
+                ),
             },
             _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
         )
@@ -577,6 +609,12 @@ def _revise_output(state: AgenticTailoringState) -> dict:
                 "final_output": call.parsed,
                 "provider_used": call.provider_used,
                 "fallback_used": state["fallback_used"] or call.fallback_used,
+                "fallback_reason": state["fallback_reason"]
+                or (
+                    None
+                    if call.fallback_reason is None
+                    else f"revise_output fallback: {call.fallback_reason}"
+                ),
             },
             _estimate_stage_usage(prompt, call.raw_text, call.provider_used),
         )
@@ -654,7 +692,7 @@ def run_agentic_workflow(
     db: Any = None,
     run_id: int | None = None,
     artifact_context: list[Any] | None = None,
-) -> tuple[TailoringLLMOutput, str, bool, AgentWorkflowMetadata]:
+) -> tuple[TailoringLLMOutput, str, bool, AgentWorkflowMetadata, str | None]:
     """
     Execute the tool-using agentic workflow and return the final tailoring output.
 
@@ -689,6 +727,7 @@ def run_agentic_workflow(
         # overwrite it to "fallback-mock" if their call fails.
         "provider_used": settings.llm_provider.lower(),
         "fallback_used": False,
+        "fallback_reason": None,
     }
 
     final_state = graph.invoke(initial_state)
@@ -698,6 +737,7 @@ def run_agentic_workflow(
         revision_needed=final_state["revision_needed"],
         retrieved_context_count=len(final_state["retrieved_context"]),
         artifact_context_count=len(final_state["artifact_context"]),
+        fallback_reason=final_state["fallback_reason"],
     )
 
     return (
@@ -705,4 +745,5 @@ def run_agentic_workflow(
         final_state["provider_used"],
         final_state["fallback_used"],
         metadata,
+        final_state["fallback_reason"],
     )

@@ -66,6 +66,7 @@ class ApplicationTailoringRunResponse(BaseModel):
     id: int
     status: str
     error_message: str | None = None
+    fallback_reason: str | None = None
 
     # AI output — populated only when status == "completed"
     tailored_summary: str | None = None

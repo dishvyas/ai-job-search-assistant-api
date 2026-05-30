@@ -65,6 +65,7 @@ def test_completed_run_has_no_error_message(db_session):
     client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
     run = db_session.query(ApplicationTailoringRun).first()
     assert run.error_message is None
+    assert run.fallback_reason is None
 
 
 def test_completed_job_persists_generated_fields(db_session):
@@ -130,6 +131,39 @@ def test_single_step_completed_run_has_null_agent_decision_fields(db_session):
     assert body["artifact_context_count"] is None
 
 
+def test_successful_no_fallback_run_has_null_fallback_reason(db_session):
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+
+    assert body["status"] == RunStatus.COMPLETED.value
+    assert body["fallback_used"] is False
+    assert body["fallback_reason"] is None
+
+
+def test_single_step_provider_failure_stores_fallback_reason(db_session, monkeypatch):
+    from app.llm.exceptions import LLMProviderUnavailableError
+
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise LLMProviderUnavailableError("OpenAI request failed sk-secret-value")
+
+    monkeypatch.setattr(
+        "app.services.application_tailoring.get_llm_provider", lambda: FailingProvider()
+    )
+
+    post_response = client.post("/api/v1/applications/tailor", json=VALID_PAYLOAD)
+    run_id = post_response.json()["run_id"]
+    body = client.get(f"/api/v1/applications/runs/{run_id}").json()
+
+    assert body["status"] == RunStatus.COMPLETED.value
+    assert body["fallback_used"] is True
+    assert "LLMProviderUnavailableError" in body["fallback_reason"]
+    assert "sk-secret-value" not in body["fallback_reason"]
+    assert "Traceback" not in body["fallback_reason"]
+
+
 # ---------------------------------------------------------------------------
 # Failed jobs
 # ---------------------------------------------------------------------------
@@ -190,6 +224,7 @@ def test_get_failed_run_returns_failed_status(db_session, monkeypatch):
     body = client.get(f"/api/v1/applications/runs/{run_id}").json()
     assert body["status"] == RunStatus.FAILED.value
     assert body["error_message"] == "Simulated processing failure"
+    assert body["fallback_reason"] is None
     assert body["tailored_summary"] is None
 
 

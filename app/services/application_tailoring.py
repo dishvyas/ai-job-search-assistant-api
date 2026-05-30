@@ -5,12 +5,13 @@
 from app.core.config import settings
 from app.llm.exceptions import LLMOutputParsingError, LLMProviderError
 from app.llm.factory import get_llm_provider
+from app.llm.fallback_reason import sanitize_fallback_reason
 from app.llm.mock import MockLLMProvider
 from app.llm.parsing import parse_tailoring_response
 from app.schemas.llm_output import TailoringLLMOutput
 
 
-def _get_llm_output(prompt: str) -> tuple[TailoringLLMOutput, str, bool]:
+def _get_llm_output(prompt: str) -> tuple[TailoringLLMOutput, str, bool, str | None]:
     """
     Call the configured provider, parse the JSON response, and return
     (parsed_output, provider_used, used_fallback).
@@ -28,15 +29,15 @@ def _get_llm_output(prompt: str) -> tuple[TailoringLLMOutput, str, bool]:
     try:
         provider = get_llm_provider()
         raw = provider.generate_text(prompt)
-        return parse_tailoring_response(raw), configured_provider, False
-    except LLMProviderError:
-        pass  # provider unavailable — fall through to mock
-    except LLMOutputParsingError:
-        pass  # provider returned malformed output — fall through to mock
+        return parse_tailoring_response(raw), configured_provider, False, None
+    except LLMProviderError as exc:
+        fallback_reason = sanitize_fallback_reason(exc)
+    except LLMOutputParsingError as exc:
+        fallback_reason = sanitize_fallback_reason(exc)
     # Two separate except clauses (not a tuple) so each failure mode is
     # individually legible; both have the same recovery action.
 
     fallback = MockLLMProvider()
     raw = fallback.generate_text(prompt)
     # If mock also fails here it is a code bug, not a runtime condition — let it raise.
-    return parse_tailoring_response(raw), "fallback-mock", True
+    return parse_tailoring_response(raw), "fallback-mock", True, fallback_reason

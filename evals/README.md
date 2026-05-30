@@ -103,6 +103,7 @@ Each result includes:
 - `estimated_cost_usd`
 - `generation_attempts`
 - `fallback_used`
+- `fallback_reason`
 - `route_decision`
 - `revision_needed`
 - `retrieved_context_count`
@@ -114,6 +115,9 @@ Eval reports currently include workflow-level cost metadata. Per-agent-stage
 cost is available through `GET /api/v1/applications/runs/{run_id}/trace`.
 Future eval reports can aggregate stage-level trace cost when deeper agentic
 cost comparisons become useful.
+When fallback is used, reports include `fallback_reason` so you can tell the
+difference between provider failures and parsing failures. Scoring does not
+depend on `fallback_reason`.
 
 ## Adding a new case
 
