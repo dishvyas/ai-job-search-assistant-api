@@ -2,6 +2,7 @@
 # Keeping this as a single function (rather than a class) makes it trivial to
 # monkeypatch in tests: `monkeypatch.setattr("app.rag.embed.generate_embedding", mock_fn)`.
 from app.core.config import settings
+from app.rag.exceptions import RAGEmbeddingError
 
 
 def generate_embedding(text: str) -> list[float]:
@@ -16,14 +17,26 @@ def generate_embedding(text: str) -> list[float]:
     """
     # Lazy import — openai is only needed when RAG is enabled, and we don't
     # want to force callers to have it installed when llm_provider=mock.
-    from openai import OpenAI  # type: ignore[import-untyped]
+    try:
+        from openai import OpenAI  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise ImportError(
+            "The 'openai' package is required for embedding support. "
+            "Install it with: pip install openai"
+        ) from exc
 
-    client = OpenAI(api_key=settings.openai_api_key or "")
-    response = client.embeddings.create(
-        model=settings.embedding_model,
-        input=text,
-    )
-    return response.data[0].embedding
+    try:
+        client = OpenAI(api_key=settings.openai_api_key or "")
+        response = client.embeddings.create(
+            model=settings.embedding_model,
+            input=text,
+        )
+        return response.data[0].embedding
+    except Exception as exc:  # noqa: BLE001
+        raise RAGEmbeddingError(
+            "Embedding generation failed. Check OPENAI_API_KEY, API quota/billing, "
+            "embedding model access, and EMBEDDING_MODEL."
+        ) from exc
 
 
 # Dimension constant exported for use in mock generation and validation.

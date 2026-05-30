@@ -180,6 +180,44 @@ RAG_ENABLED=false
 The same `OPENAI_API_KEY` is also used for embeddings when `RAG_ENABLED=true`.
 RAG still requires PostgreSQL with `pgvector` for meaningful vector similarity search.
 
+## Real-provider local testing
+
+You can verify real OpenAI generation first without involving RAG:
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1-mini
+RAG_ENABLED=false
+```
+
+That setup works for both single-step and agentic generation without any vector
+database dependency.
+
+For an embedding smoke test:
+
+```bash
+python - <<'PY'
+from app.rag.embed import generate_embedding
+vec = generate_embedding("AI backend engineer FastAPI RAG evaluation")
+print(len(vec))
+PY
+```
+
+RAG ingest requires all of the following:
+
+- PostgreSQL
+- `pgvector`
+- `OPENAI_API_KEY` with embeddings quota/billing
+- `RAG_ENABLED=true`
+
+If `POST /api/v1/jobs/ingest` returns `503 Service Unavailable`, check:
+
+- API quota/billing
+- `OPENAI_API_KEY`
+- `EMBEDDING_MODEL`
+- model access for the configured embedding model
+
 ---
 
 ---

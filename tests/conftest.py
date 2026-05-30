@@ -26,14 +26,25 @@ def force_mock_llm_provider(monkeypatch):
     local .env that sets RAG_ENABLED=true. Individual tests that exercise RAG
     behaviour re-patch this to True explicitly.
     """
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("WORKFLOW_MODE", "single_step")
+    monkeypatch.setenv("RAG_ENABLED", "false")
+    monkeypatch.setenv("ARTIFACT_RETRIEVAL_ENABLED", "false")
+    monkeypatch.setattr("app.core.config.settings.llm_provider", "mock")
+    monkeypatch.setattr("app.core.config.settings.workflow_mode", "single_step")
+    monkeypatch.setattr("app.core.config.settings.rag_enabled", False)
+    monkeypatch.setattr("app.core.config.settings.artifact_retrieval_enabled", False)
     monkeypatch.setattr("app.llm.factory.settings.llm_provider", "mock")
     # Disable RAG globally — individual RAG tests re-enable it via monkeypatch.
     # Without this, any local .env with RAG_ENABLED=true causes background-job
     # tests to attempt a real OpenAI embedding call and fail.
+    monkeypatch.setattr("app.services.background_tailoring.settings.workflow_mode", "single_step")
     monkeypatch.setattr("app.services.background_tailoring.settings.rag_enabled", False)
     monkeypatch.setattr(
         "app.services.background_tailoring.settings.artifact_retrieval_enabled", False
     )
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.workflow_mode", "single_step")
+    monkeypatch.setattr("app.services.agentic_tailoring.settings.llm_provider", "mock")
     monkeypatch.setattr("app.services.agentic_tailoring.settings.rag_enabled", False)
     monkeypatch.setattr("app.api.v1.routes.jobs.settings.rag_enabled", False)
 

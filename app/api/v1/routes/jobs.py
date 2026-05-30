@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.llm.factory import get_llm_provider
 from app.llm.parsing import parse_tailoring_response
 from app.prompts.tailoring import build_tailoring_prompt
+from app.rag.exceptions import RAGEmbeddingError, RAGIngestionError
 from app.rag.ingest import ingest_job_description
 from app.rag.retrieve import retrieve_relevant_jobs
 from app.schemas.jobs import (
@@ -40,14 +41,23 @@ def ingest(
             status_code=422,
             detail="RAG is disabled. Set RAG_ENABLED=true to use this endpoint.",
         )
-    jd = ingest_job_description(
-        db=db,
-        title=request.title,
-        company=request.company,
-        location=request.location,
-        raw_text=request.raw_text,
-        metadata=request.metadata,
-    )
+    try:
+        jd = ingest_job_description(
+            db=db,
+            title=request.title,
+            company=request.company,
+            location=request.location,
+            raw_text=request.raw_text,
+            metadata=request.metadata,
+        )
+    except (RAGEmbeddingError, RAGIngestionError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Embedding provider failed. Check OPENAI_API_KEY, quota/billing, "
+                "embedding model access, and EMBEDDING_MODEL."
+            ),
+        ) from exc
     return JobIngestResponse(
         job_description_id=jd.id,
         title=jd.title,

@@ -70,11 +70,14 @@ def process_tailoring_job(run_id: int, db: Session) -> None:
         # the existing single-step/agentic behaviour is completely unchanged.
         rag_context = None
         if settings.rag_enabled:
-            from app.rag.retrieve import retrieve_relevant_jobs
+            try:
+                from app.rag.retrieve import retrieve_relevant_jobs
 
-            retrieved = retrieve_relevant_jobs(db, query=request.job_description)
-            # retrieve_relevant_jobs returns (jd, score) tuples; we only need the jd.
-            rag_context = [jd for jd, _score in retrieved]
+                retrieved = retrieve_relevant_jobs(db, query=request.job_description)
+                # retrieve_relevant_jobs returns (jd, score) tuples; we only need the jd.
+                rag_context = [jd for jd, _score in retrieved]
+            except Exception:  # noqa: BLE001
+                rag_context = None
 
         artifact_context = None
         if settings.rag_enabled and settings.artifact_retrieval_enabled:

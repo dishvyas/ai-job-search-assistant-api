@@ -128,6 +128,8 @@ Each result includes:
 - Real-provider outputs may vary across runs
 - Cost values are approximate
 - Real-provider evals can cost money
+- RAG-enabled evals require successful embedding calls plus a PostgreSQL/pgvector database
+- If embeddings fail due to insufficient quota, no-RAG evals can still verify OpenAI generation
 - Tests remain mock/fake-provider only
 
 ## Future improvements
