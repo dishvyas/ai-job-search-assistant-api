@@ -119,6 +119,10 @@ When fallback is used, reports include `fallback_reason` so you can tell the
 difference between provider failures and parsing failures. Scoring does not
 depend on `fallback_reason`.
 
+RAG-enabled evals still depend on a working embeddings setup and a Postgres +
+pgvector database. The Docker Compose demo setup in the root README is the
+easiest way to explain and demonstrate that locally.
+
 ## Adding a new case
 
 1. Add a new JSON file to `evals/cases/`

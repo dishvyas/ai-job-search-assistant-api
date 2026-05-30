@@ -1,0 +1,11 @@
+{
+  "title": "AI Platform Backend Engineer",
+  "company": "Fictional Systems",
+  "location": "Remote",
+  "raw_text": "We are hiring an AI Platform Backend Engineer to build Python and FastAPI services, LLM provider abstractions, evaluation tooling, RAG pipelines, vector search integrations, and production-minded workflow observability for AI-assisted product features.",
+  "metadata": {
+    "role_type": "backend",
+    "domain": "ai-platform",
+    "seniority": "senior"
+  }
+}

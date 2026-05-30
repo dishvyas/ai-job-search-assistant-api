@@ -36,6 +36,111 @@ cp .env.example .env
 
 ---
 
+## Demo-ready local setup
+
+This project now has a simple Docker Compose setup so the backend, Postgres,
+and pgvector-backed RAG path are easier to run, inspect, and explain locally.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    A["POST /api/v1/applications/tailor"] --> B["Create run row"]
+    B --> C["Background task"]
+    C --> D{"Workflow mode"}
+    D --> E["single_step"]
+    D --> F["agentic graph"]
+    F --> G["Optional RAG retrieval"]
+    E --> H["LLM provider"]
+    F --> H
+    G --> I["Postgres + pgvector"]
+    H --> J["Persist output + workflow metadata"]
+    F --> K["Persist agent trace steps"]
+    J --> L["GET /api/v1/applications/runs/{id}"]
+    K --> M["GET /api/v1/applications/runs/{id}/trace"]
+    J --> N["Local eval reports"]
+```
+
+### A. Fast local mock demo with Docker
+
+```bash
+cp .env.docker.example .env.docker
+docker compose up --build
+docker compose exec api alembic upgrade head
+curl http://localhost:8000/health
+python scripts/demo_tailoring_run.py --show-trace
+```
+
+Default Docker demo settings:
+- `LLM_PROVIDER=mock`
+- `WORKFLOW_MODE=agentic`
+- `RAG_ENABLED=false`
+- `ARTIFACT_RETRIEVAL_ENABLED=false`
+
+Optional shortcuts:
+
+```bash
+make compose-up
+make compose-migrate
+make compose-logs
+make compose-down
+```
+
+### B. Local evals
+
+```bash
+python evals/run_eval.py --provider mock --workflow-mode single_step
+python evals/run_eval.py --provider mock --workflow-mode agentic
+```
+
+### C. Real provider without RAG
+
+- set `LLM_PROVIDER=openai`
+- set `OPENAI_API_KEY`
+- keep `RAG_ENABLED=false`
+- run one eval case:
+
+```bash
+python evals/run_eval.py --provider openai --workflow-mode single_step --case backend_engineer_germany --save-report
+```
+
+### D. Full RAG demo
+
+- set `RAG_ENABLED=true`
+- set `ARTIFACT_RETRIEVAL_ENABLED=true`
+- set `OPENAI_API_KEY` with embeddings quota
+- run migrations:
+
+```bash
+docker compose exec api alembic upgrade head
+```
+
+- ingest a demo job:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs/ingest \
+  -H "Content-Type: application/json" \
+  --data @demo/job_ingest_request.json
+```
+
+- run the demo tailoring request:
+
+```bash
+python scripts/demo_tailoring_run.py --show-trace
+```
+
+Artifact retrieval needs at least one previously completed run, because the app
+can only retrieve past tailored artifacts after it has already generated and
+embedded at least one completed output.
+
+### E. Troubleshooting
+
+- `503` from `/api/v1/jobs/ingest` usually means embedding provider quota, billing, or model-access trouble.
+- `provider_used=fallback-mock` with a populated `fallback_reason` usually means the configured provider failed or returned malformed structured output.
+- `retrieved_context_count=0` or `artifact_context_count=0` can simply mean nothing has been indexed yet, or the configured similarity threshold filtered everything out.
+
+---
+
 ## Run the API
 
 ```bash

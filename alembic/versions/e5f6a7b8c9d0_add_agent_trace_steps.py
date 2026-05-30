@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.Column("input_summary", sa.Text(), nullable=True),
         sa.Column("output_summary", sa.Text(), nullable=True),
         sa.Column("provider_used", sa.Text(), nullable=True),
-        sa.Column("fallback_used", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("fallback_used", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("latency_ms", sa.Integer(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column(
